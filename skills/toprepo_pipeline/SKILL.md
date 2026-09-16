@@ -45,8 +45,9 @@ check, not a formality.
 TopRepo is also **someone else's tool, not ours** -- it's a separately
 maintained repo (Tulane University / toppic-suite) that already has its own
 README, resources, and release cadence. Don't vendor a copy of it into
-this project (no scripts live under this skill except one small original
-helper); locate or clone the real thing and drive it in place.
+this project (the only files under this skill's own `scripts/` are two
+small original fixes, not copies of TopRepo's code -- see Resources);
+locate or clone the real thing and drive it in place.
 
 ## When to Use This
 
@@ -60,10 +61,11 @@ helper); locate or clone the real thing and drive it in place.
 
 **Not this skill**: `msconvert` (raw -> mzML), TopFD (mzML -> msalign +
 `.feature`), and TopPIC (msalign -> PrSM identification TSV) are separate
-compiled tools from the same toppic-suite family. TopRepo -- and this skill
--- start **after** those three have already produced their output; it does
-not run them. If the user doesn't have mzML + msalign + `.feature` +
-TopPIC PrSM TSV yet, say so rather than guessing at how to invoke TopFD/TopPIC.
+compiled tools from the same toppic-suite family, covered by the
+`toppic_suite` skill. TopRepo -- and this skill -- start **after** those
+three have already produced their output; it does not run them. If the
+user doesn't have mzML + msalign + `.feature` + TopPIC PrSM TSV yet, use
+`toppic_suite` first rather than guessing at how to invoke TopFD/TopPIC here.
 
 ## Prerequisites
 
@@ -131,10 +133,21 @@ python3 <toprepo_dir>/src/process/feature/extract_feature_info.py <dataset_id> <
 ```
 
 **1.4 Preprocess the TopPIC PrSM TSV** -- use the `*_toppic_prsm_single.tsv`
-(single best PrSM per spectrum), not the multi-PrSM one.
+(single best PrSM per spectrum), not the multi-PrSM one. TopPIC's raw output
+isn't directly usable -- strip its preamble first:
 ```
-python3 <toprepo_dir>/src/process/prsm/prsm_preprocess.py <input>_toppic_prsm_single.tsv <dataset_id> --output <name>_toppic_info.tsv
+python3 skills/toprepo_pipeline/scripts/strip_toppic_preamble.py <input>_toppic_prsm_single.tsv <name>_prsm_single_clean.tsv
+python3 <toprepo_dir>/src/process/prsm/prsm_preprocess.py <name>_prsm_single_clean.tsv <dataset_id> --output <name>_toppic_info.tsv
 ```
+Don't use TopRepo's own `<toprepo_dir>/src/util/tsv/remove_params.py` for
+this -- verified against real TopPIC 1.9.0 output: it only strips the
+`********** Parameters **********`-delimited block, but TopPIC also prints
+3 summary lines (`Number of identified PrSMs: 0`, `... proteoforms: 0`,
+`... proteins: 0`) right before the real header, which `remove_params.py`
+leaves in place. Feeding *that* into `prsm_preprocess.py` crashes it with
+`ValueError: dict contains fields not in fieldnames: None` (it parses the
+first summary line as a one-column header). `strip_toppic_preamble.py`
+does both jobs in one pass -- skip it entirely.
 
 **1.5 Merge into one combined-info TSV** -- this is where the two
 undocumented requirements live; both verified by running this script in a
@@ -244,6 +257,7 @@ commands above are the more predictable path.
 | Pattern | Problem | Fix |
 |---|---|---|
 | Pointing step 1.5's 4th argument at the shipped `toprepo_file_info_v1.2.1.tsv` for a dataset that isn't already in TopRepo | Inner join finds no match -> `<name>_combined_info.tsv` is silently written with 0 rows, and everything after it is empty too | Build your own with `scripts/make_file_info_tsv.py` (see step 1.5) |
+| Feeding TopPIC's raw `*_toppic_prsm_single.tsv` (or TopRepo's own `remove_params.py` output) straight into `prsm_preprocess.py` (step 1.4) | Verified against real TopPIC 1.9.0 output: `remove_params.py` only strips the `**Parameters**` block, not TopPIC's 3-line `Number of identified ...` summary right before the real header -- `prsm_preprocess.py` then crashes with `ValueError: dict contains fields not in fieldnames: None` | Run `scripts/strip_toppic_preamble.py` first (see step 1.4) |
 | Naming step 1.1's output anything other than `<dataset_id>_<mzml_stem>_mzml_info.tsv`, or running step 1.5 from a different directory | Step 1.5 derives that filename internally and reads it as a bare relative path -- `FileNotFoundError` if it's not exactly there | Name it exactly as step 1.1 above shows, keep the whole dataset's Phase 1/2 run in one working directory |
 | Running `merge_msalign_prsm.py` / `msalign_anno.py` / `msalign_anno_based_frequency.py` without `PYTHONPATH=<toprepo_dir>/src` | They `from process.msalign import msalign_reader`; without `src` on the path that's `ModuleNotFoundError: No module named 'process'`, exactly as the README's own command line is written | Prefix with `PYTHONPATH=<toprepo_dir>/src` as shown in steps 2.2/2.3 |
 | Assuming steps 2.2/2.3 need no extra install because they're "just text processing" | `msalign_reader.py` subclasses `torch.utils.data.Dataset` for no real reason, so `torch` is a hard import-time dependency of those three scripts | `pip install torch` (CPU build is enough) alongside pandas/numpy/pyteomics |
@@ -267,10 +281,17 @@ commands above are the more predictable path.
 
 **Implementation (this skill)**:
 - `scripts/make_file_info_tsv.py` -- builds the step-1.5 file_info TSV for
-  datasets not already in TopRepo's own corpus; the only script this skill
-  vendors, because it's original bookkeeping, not a copy of TopRepo's code
+  datasets not already in TopRepo's own corpus
+- `scripts/strip_toppic_preamble.py` -- cleans TopPIC's raw TSV output for
+  step 1.4 (TopRepo's own `remove_params.py` doesn't finish the job -- see
+  step 1.4 and the Anti-Patterns table)
+- Both are original bookkeeping/fixes, not copies of TopRepo's code -- the
+  only scripts this skill vendors
 
 **Related skills**:
+- `toppic_suite` -- the step *before* this one: msconvert -> TopFD -> TopPIC,
+  producing the mzML/msalign/`.feature`/PrSM-TSV files this skill's Phase 1
+  merges together
 - `ms_process` -- takes over from this skill's Phase 2 output: splitting
   the annotated msalign into train/val(/test), and converting to the scan
   TSV `td_pred.py` needs
