@@ -18,7 +18,10 @@ description: |
 
 Two small, single-purpose tools for getting a TopRepo-annotated
 `.msalign` file into the shape another step needs. Neither owns any
-model logic -- that lives in `pdpred_pipeline`.
+model logic -- that lives in `pdpred_pipeline`. Neither one produces the
+annotated `.msalign` in the first place -- if that doesn't exist yet
+(you're starting from raw mzML/msalign/feature/TopPIC output), that's the
+`toprepo_pipeline` skill, run before this one.
 
 ## The Core Philosophy
 
@@ -45,6 +48,8 @@ below.
   file hasn't been split yet -- do this first, before HDF5 conversion
 - The user needs scan metadata as a TSV -- most commonly to build the
   `--input` file for `td_pred.py`'s prediction step
+- The input file has no `DATABASE_SEQUENCE`/proteoform annotation at
+  all yet -- that's `toprepo_pipeline`, not this skill; run it first
 
 ## Tool 1: split_ms_file.py
 

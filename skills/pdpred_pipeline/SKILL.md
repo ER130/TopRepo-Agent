@@ -22,7 +22,9 @@ matter, and where the sharp edges are. All scripts live
 in `script/`.
 
 The input MS file should has already been processed(by TopRepo) and
-is annotated per spectrum: `BEGIN IONS ... END IONS` blocks.
+is annotated per spectrum: `BEGIN IONS ... END IONS` blocks. If it hasn't
+been -- no `DATABASE_SEQUENCE` on the spectra yet -- that's the
+`toprepo_pipeline` skill, run before this one (then `ms_process` to split it).
 
 ## When to Use This
 
