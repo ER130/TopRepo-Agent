@@ -70,11 +70,31 @@ mkdir build && cd build
 cmake ..
 make -j$(nproc) topfd toppic   # console tools only -- skips the slow Qt GUI build; add topmg/topindex/topdiff/topdia if needed
 make install                    # installs to /usr/local/bin, /usr/local/lib/toppic, /usr/share/toppic on Linux
+echo /usr/local/lib/toppic > /etc/ld.so.conf.d/toppic.conf && ldconfig   # see "make install ships a broken binary" below -- not optional
 ```
 All of `ext/{pwiz,boost,onnx,htslib,rapidxml,xml2json,catch}` and the
 Linux ONNX Runtime `.so` (`lib/toppic/libonnxruntime.so`) are already
 vendored in the repo -- no submodule init or separate ONNX Runtime install
 needed on Linux.
+
+**`make install` on its own ships a binary that cannot run.** Verified:
+`readelf -d /usr/local/bin/topfd` (and `toppic`) shows **no RPATH/RUNPATH
+at all** after `make install`, so `/usr/local/bin/topfd --help` fails with
+`error while loading shared libraries: libonnxruntime.so.1.14.1: cannot
+open shared object file` (exit 127) -- `libonnxruntime.so` sits in
+`/usr/local/lib/toppic/`, which isn't a default linker search path and
+nothing points there. This is a real bug in the project's own
+`CMakeLists.txt`: the `-Wl,-rpath=$ORIGIN/../lib/toppic` flag is assigned
+to `CMAKE_SHARED_LINKER_FLAGS`, which CMake only applies to *shared
+library* targets, never to `add_executable` targets like `topfd`/`toppic`
+-- confirmed by contrast: the **build-tree** copy (`build/../bin/topfd`,
+before `make install`) works fine and carries a different, working
+absolute `RUNPATH` straight into the build tree's own `lib/toppic/`, which
+`make install`'s copy doesn't inherit. The `ldconfig` line above (or
+`export LD_LIBRARY_PATH=/usr/local/lib/toppic` per shell if you can't
+write to `/etc`) fixes it persistently; do this immediately after every
+`make install`, not just once if it happens to work the first time you
+try running from the build tree.
 
 **Skipping `make install`**: `topfd`/`toppic` look for their `resources/`
 directory next to the executable first, then fall back to
@@ -177,6 +197,7 @@ whenever the FASTA content changes, or use a new filename.
 |---|---|---|
 | Copying flag defaults/meanings from `doc/topfd_manual.md` or `doc/toppic_manual.md` | Verified stale against a real HEAD build (see Core Philosophy) -- wrong defaults and at least one flag whose default behavior flipped | Run `topfd --help`/`toppic --help` on the binary you actually built and read from that |
 | Running `topfd`/`toppic` straight from `build/../bin/` without `make install` or a `resources/` symlink | `getResourceDir()` looks next to the executable, then `/usr/share/toppic`; neither exists yet | `make install`, or symlink `<toppic_suite_dir>/resources` next to the binaries |
+| Trusting `make install` alone and moving on | Verified: `/usr/local/bin/topfd`/`toppic` have no RPATH (a real bug -- the project's rpath flag targets shared libraries, never applied to these executables), so they fail with `error while loading shared libraries: libonnxruntime.so.1.14.1 ...` (exit 127) even though the build-tree copy worked | Register `/usr/local/lib/toppic` with `ldconfig` (or set `LD_LIBRARY_PATH`) right after every `make install`, as shown in Prerequisites |
 | Editing/regenerating a FASTA in place and re-running `toppic` against it | Verified: the cached `<database>.fasta_idx/` isn't invalidated by a content change -- you silently search the old database | `rm -rf <database>.fasta_idx/` first, or search-and-replace to a new filename |
 | Building the full `make install` (all six tools + six GUIs) when only TopFD/TopPIC are needed | Qt GUI compilation is the slow part and buys nothing for a command-line skill | `make -j$(nproc) topfd toppic` (add other console tools by name only if asked) |
 | Assuming msconvert's exact install/flags from this skill without checking | Written from general knowledge only -- this sandbox couldn't reach ProteoWizard's docs or run Docker to verify (see Core Philosophy) | Confirm against proteowizard.sourceforge.io, or ask the user how they normally run it |
