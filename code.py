@@ -38,6 +38,7 @@ the agent is idle, with durable jobs surviving a restart via
 """
 
 import atexit
+import fcntl
 import glob
 import json
 import os
@@ -48,6 +49,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -671,6 +673,37 @@ def consolidate_memories() -> int:
 
 # -- Task system --
 
+# Two lock layers, both reentrant per-thread via a depth counter in thread
+# state: an in-process RLock (safe as soon as the RLock is held once per
+# thread), and an flock'd lockfile so two separate processes sharing this
+# workspace (e.g. a teammate running in its own process) never race either.
+# Reads that don't mutate anything (load/list) only need the RLock.
+TASK_LOCK_PATH = TASKS_DIR / ".lock"
+_task_lock = threading.RLock()
+_task_lock_state = threading.local()
+
+
+@contextmanager
+def task_store_lock():
+    with _task_lock:
+        depth = getattr(_task_lock_state, "depth", 0)
+        if depth == 0:
+            TASKS_DIR.mkdir(parents=True, exist_ok=True)
+            handle = TASK_LOCK_PATH.open("a+", encoding="utf-8")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            _task_lock_state.handle = handle
+        _task_lock_state.depth = depth + 1
+        try:
+            yield
+        finally:
+            _task_lock_state.depth -= 1
+            if _task_lock_state.depth == 0:
+                handle = _task_lock_state.handle
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
+                del _task_lock_state.handle
+
+
 @dataclass
 class Task:
     id: str
@@ -679,6 +712,7 @@ class Task:
     status: str
     owner: str | None
     blockedBy: list[str]
+    worktree: str | None = None
 
 
 class TaskStore:
@@ -710,25 +744,26 @@ class TaskStore:
         if not subject:
             raise ValueError("Task subject cannot be empty")
 
-        self._root(create=True)
-        for _ in range(100):
-            task = Task(
-                id=f"task_{secrets.token_hex(4)}",
-                subject=subject,
-                description=description,
-                status="pending",
-                owner=None,
-                blockedBy=[],
-            )
-            try:
-                with self._path(task.id, create_root=True).open(
-                    "x", encoding="utf-8"
-                ) as handle:
-                    json.dump(asdict(task), handle, indent=2)
-                return task
-            except FileExistsError:
-                continue
-        raise RuntimeError("Could not allocate a unique task ID")
+        with task_store_lock():
+            self._root(create=True)
+            for _ in range(100):
+                task = Task(
+                    id=f"task_{secrets.token_hex(4)}",
+                    subject=subject,
+                    description=description,
+                    status="pending",
+                    owner=None,
+                    blockedBy=[],
+                )
+                try:
+                    with self._path(task.id, create_root=True).open(
+                        "x", encoding="utf-8"
+                    ) as handle:
+                        json.dump(asdict(task), handle, indent=2)
+                    return task
+                except FileExistsError:
+                    continue
+            raise RuntimeError("Could not allocate a unique task ID")
 
     def _depends_on(self, task_id: str, target_id: str) -> bool:
         """Return whether task_id transitively depends on target_id."""
@@ -749,54 +784,65 @@ class TaskStore:
         if not isinstance(add_blocked_by, list):
             raise ValueError("addBlockedBy must be a list of task IDs")
 
-        task = self.load(task_id)
-        if task.status != "pending" or task.owner is not None:
-            raise ValueError(
-                f"Task {task_id} dependencies can only be updated while "
-                "pending and unowned"
-            )
-
-        dependencies = list(dict.fromkeys(add_blocked_by))
-        for dependency in dependencies:
-            if dependency == task_id:
-                raise ValueError("Task cannot depend on itself")
-            if not self.exists(dependency):
-                raise ValueError(f"Dependency not found: {dependency}")
-            if dependency not in task.blockedBy and self._depends_on(
-                dependency, task_id
-            ):
+        with task_store_lock():
+            task = self.load(task_id)
+            if task.status != "pending" or task.owner is not None:
                 raise ValueError(
-                    f"Dependency cycle detected: {task_id} -> {dependency}"
+                    f"Task {task_id} dependencies can only be updated while "
+                    "pending and unowned"
                 )
 
-        task.blockedBy.extend(
-            dependency for dependency in dependencies
-            if dependency not in task.blockedBy
-        )
-        self.save(task)
-        return task
+            dependencies = list(dict.fromkeys(add_blocked_by))
+            for dependency in dependencies:
+                if dependency == task_id:
+                    raise ValueError("Task cannot depend on itself")
+                if not self.exists(dependency):
+                    raise ValueError(f"Dependency not found: {dependency}")
+                if dependency not in task.blockedBy and self._depends_on(
+                    dependency, task_id
+                ):
+                    raise ValueError(
+                        f"Dependency cycle detected: {task_id} -> {dependency}"
+                    )
+
+            task.blockedBy.extend(
+                dependency for dependency in dependencies
+                if dependency not in task.blockedBy
+            )
+            self.save(task)
+            return task
 
     def save(self, task: Task) -> None:
-        self._path(task.id, create_root=True).write_text(
-            json.dumps(asdict(task), indent=2),
-            encoding="utf-8",
-        )
+        with task_store_lock():
+            path = self._path(task.id, create_root=True)
+            temporary = path.with_name(
+                f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            try:
+                temporary.write_text(
+                    json.dumps(asdict(task), indent=2), encoding="utf-8"
+                )
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def load(self, task_id: str) -> Task:
-        data = json.loads(self._path(task_id).read_text(encoding="utf-8"))
-        task = Task(**data)
-        if task.id != task_id:
-            raise ValueError(f"Task file ID does not match {task_id}")
-        if task.status not in ("pending", "in_progress", "completed"):
-            raise ValueError(f"Invalid task status: {task.status}")
-        return task
+        with _task_lock:
+            data = json.loads(self._path(task_id).read_text(encoding="utf-8"))
+            task = Task(**data)
+            if task.id != task_id:
+                raise ValueError(f"Task file ID does not match {task_id}")
+            if task.status not in ("pending", "in_progress", "completed"):
+                raise ValueError(f"Invalid task status: {task.status}")
+            return task
 
     def list(self) -> list[Task]:
-        if not self.directory.exists():
-            return []
-        root = self._root()
-        return [self.load(path.stem)
-                for path in sorted(root.glob("task_*.json"))]
+        with _task_lock:
+            if not self.directory.exists():
+                return []
+            root = self._root()
+            return [self.load(path.stem)
+                    for path in sorted(root.glob("task_*.json"))]
 
 
 TASKS = TaskStore(TASKS_DIR)
@@ -838,39 +884,43 @@ def can_start(task_id: str) -> bool:
 
 
 def claim_task(task_id: str, owner: str = "agent") -> str:
-    task = load_task(task_id)
-    if task.status != "pending":
-        return f"Task {task_id} is {task.status}, cannot claim"
-    dependencies = incomplete_dependencies(task)
-    if dependencies:
-        return f"Blocked by: {dependencies}"
-    task.owner = owner
-    task.status = "in_progress"
-    TASKS.save(task)
+    """Atomically claim one pending task: check-then-write under one lock
+    so two concurrent claimants can never both win the same task."""
+    with task_store_lock():
+        task = load_task(task_id)
+        if task.status != "pending":
+            return f"Task {task_id} is {task.status}, cannot claim"
+        dependencies = incomplete_dependencies(task)
+        if dependencies:
+            return f"Blocked by: {dependencies}"
+        task.owner = owner
+        task.status = "in_progress"
+        TASKS.save(task)
     print(f"  [claim] {task.subject} -> in_progress (owner: {owner})")
     return f"Claimed {task.id} ({task.subject})"
 
 
 def complete_task(task_id: str, owner: str = "agent") -> str:
-    task = load_task(task_id)
-    if task.status != "in_progress":
-        return f"Task {task_id} is {task.status}, cannot complete"
-    if task.owner != owner:
-        return f"Task {task_id} is owned by {task.owner}, not {owner}"
-    ready_before = {
-        candidate.id
-        for candidate in list_tasks()
-        if candidate.status == "pending"
-        and candidate.blockedBy
-        and can_start(candidate.id)
-    }
-    task.status = "completed"
-    TASKS.save(task)
-    unblocked = [candidate.subject for candidate in list_tasks()
-                 if candidate.status == "pending"
-                 and candidate.blockedBy
-                 and candidate.id not in ready_before
-                 and can_start(candidate.id)]
+    with task_store_lock():
+        task = load_task(task_id)
+        if task.status != "in_progress":
+            return f"Task {task_id} is {task.status}, cannot complete"
+        if task.owner != owner:
+            return f"Task {task_id} is owned by {task.owner}, not {owner}"
+        ready_before = {
+            candidate.id
+            for candidate in list_tasks()
+            if candidate.status == "pending"
+            and candidate.blockedBy
+            and can_start(candidate.id)
+        }
+        task.status = "completed"
+        TASKS.save(task)
+        unblocked = [candidate.subject for candidate in list_tasks()
+                     if candidate.status == "pending"
+                     and candidate.blockedBy
+                     and candidate.id not in ready_before
+                     and can_start(candidate.id)]
     print(f"  [complete] {task.subject}")
     message = f"Completed {task.id} ({task.subject})"
     if unblocked:
