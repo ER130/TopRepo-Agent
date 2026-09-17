@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-code.py - Skill Loading + Context Compact + Memory + Task + Background + Cron
+code.py - Skill Loading + Context Compact + Memory + Task + Background +
+Cron + Agent Teams
 
 Merges learn-claude-code s07 (skill loading), s08 (context compaction),
-s09 (memory), s10 (task system), s11 (background tasks), and s12 (cron
-scheduler) on top of the original s07 agent.
+s09 (memory), s10 (task system), s11 (background tasks), s12 (cron
+scheduler), and s13 (agent teams, minus MCP) on top of the original s07
+agent.
 
 The system prompt contains a catalog of skill names and descriptions.
 The model loads the full SKILL.md only when it calls load_skill.
@@ -34,7 +36,14 @@ collected on a later turn as a <task_notification> (s11). schedule_cron
 registers a 5-field cron job that a scheduler thread enqueues when due;
 a queue-processor thread delivers it as a "[Scheduled] ..." turn once
 the agent is idle, with durable jobs surviving a restart via
-.scheduled_tasks.json (s12).
+.scheduled_tasks.json (s12). spawn_teammate starts a persistent teammate
+thread with its own claimed Task and message history; it exchanges
+messages, plan approvals, and shutdown requests with Lead through file
+mailboxes (.mailboxes/) and reports results back into this agent's own
+turn via consume_lead_inbox (s13). A Task can optionally bind to a Git
+worktree (.worktrees/) so a teammate's file/bash tools run in an
+isolated working directory (s13 worktrees, Phase 3c). MCP is not
+included.
 """
 
 import atexit
@@ -42,6 +51,7 @@ import fcntl
 import glob
 import json
 import os
+import random
 import re
 import secrets
 import signal
@@ -50,7 +60,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -884,18 +894,32 @@ def can_start(task_id: str) -> bool:
 
 
 def claim_task(task_id: str, owner: str = "agent") -> str:
-    """Atomically claim one pending task: check-then-write under one lock
-    so two concurrent claimants can never both win the same task."""
+    """Atomically claim one pending task and bind the owner's cwd: check,
+    write, and assignment update all happen under one lock so two
+    concurrent claimants can never both win the same task."""
     with task_store_lock():
         task = load_task(task_id)
         if task.status != "pending":
             return f"Task {task_id} is {task.status}, cannot claim"
+        assignment = teammate_assignments.get(owner)
+        if assignment:
+            return (f"Owner {owner} must finish the current work turn for "
+                    f"{assignment['task_id']} before claiming another task")
+        current = _owner_in_progress(owner)
+        if current:
+            return (f"Owner {owner} must complete {current.id} before "
+                    "claiming another task")
         dependencies = incomplete_dependencies(task)
         if dependencies:
             return f"Blocked by: {dependencies}"
+        cwd, error = task_worktree_cwd(task)
+        if error:
+            return f"Cannot claim {task_id}: {error}"
         task.owner = owner
         task.status = "in_progress"
         TASKS.save(task)
+        teammate_assignments[owner] = {"task_id": task.id, "cwd": cwd}
+        advance_assignment_version(owner)
     print(f"  [claim] {task.subject} -> in_progress (owner: {owner})")
     return f"Claimed {task.id} ({task.subject})"
 
@@ -907,6 +931,15 @@ def complete_task(task_id: str, owner: str = "agent") -> str:
             return f"Task {task_id} is {task.status}, cannot complete"
         if task.owner != owner:
             return f"Task {task_id} is owned by {task.owner}, not {owner}"
+        gate = globals().get("plan_gates", {}).get(owner, "not_required")
+        if gate in {"required", "pending", "rejected"}:
+            return f"Task {task_id} cannot complete while plan status is {gate}"
+        assignment = teammate_assignments.get(owner)
+        if not assignment or assignment.get("task_id") != task.id:
+            cwd, error = task_worktree_cwd(task)
+            if error:
+                return f"Task {task_id} cannot complete: {error}"
+            teammate_assignments[owner] = {"task_id": task.id, "cwd": cwd}
         ready_before = {
             candidate.id
             for candidate in list_tasks()
@@ -927,6 +960,189 @@ def complete_task(task_id: str, owner: str = "agent") -> str:
         message += f"\nUnblocked: {', '.join(unblocked)}"
         print(f"  [unblocked] {', '.join(unblocked)}")
     return message
+
+
+# -- Task-bound worktrees --
+
+# owner -> {"task_id": str, "cwd": Path}. One assignment at a time per
+# owner; every filesystem/bash tool resolves its cwd through this.
+teammate_assignments: dict[str, dict[str, object]] = {}
+assignment_versions: dict[str, int] = {}
+
+
+def advance_assignment_version(owner: str):
+    """Invalidate an old plan approval without clearing an explicit plan
+    requirement. Called whenever an owner's assignment changes."""
+    with _task_lock:
+        assignment_versions[owner] = assignment_versions.get(owner, 0) + 1
+        gates = globals().get("plan_gates")
+        request_ids = globals().get("plan_request_ids")
+        team = globals().get("team_lock")
+        if team is not None:
+            team.acquire()
+        try:
+            if (isinstance(gates, dict) and owner in gates
+                    and gates[owner] != "not_required"):
+                gates[owner] = "required"
+            if isinstance(request_ids, dict):
+                request_ids.pop(owner, None)
+        finally:
+            if team is not None:
+                team.release()
+
+
+def _owner_in_progress(owner: str) -> Task | None:
+    return next((task for task in list_tasks()
+                 if task.status == "in_progress" and task.owner == owner), None)
+
+
+WORKTREES_DIR = WORKDIR / ".worktrees"
+WORKTREES_ROOT = WORKTREES_DIR.resolve()
+VALID_WORKTREE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def validate_worktree_name(name: str) -> str | None:
+    if not isinstance(name, str) or not VALID_WORKTREE_NAME.fullmatch(name):
+        return ("worktree name must be 1-64 letters, digits, dots, "
+                "underscores, or dashes, and start with a letter or digit")
+    if name in {".", ".."} or ".." in name:
+        return "worktree name cannot contain '..'"
+    return None
+
+
+def _worktree_path(name: str) -> Path:
+    path = (WORKTREES_DIR / name).resolve()
+    if (not WORKTREES_ROOT.is_relative_to(WORKDIR.resolve())
+            or not path.is_relative_to(WORKTREES_ROOT)
+            or path == WORKTREES_ROOT):
+        raise ValueError(f"Worktree path escapes directory: {name!r}")
+    return path
+
+
+def _worktree_branch(name: str) -> str:
+    return f"wt/{name}"
+
+
+def _run_git(args: list[str], cwd: Path | None = None) -> tuple[bool, str]:
+    """Run Git without shell interpolation and preserve machine output."""
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=cwd or WORKDIR,
+            capture_output=True, text=True, errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"{type(e).__name__}: {e}"
+    output = (result.stdout + result.stderr).strip()
+    return result.returncode == 0, output or "(no output)"
+
+
+def run_git(args: list[str], cwd: Path | None = None) -> tuple[bool, str]:
+    """Run Git and bound only the text returned to the model."""
+    ok, output = _run_git(args, cwd)
+    return ok, output[:5000]
+
+
+def _registered_worktrees() -> tuple[dict[Path, dict[str, str]], str | None]:
+    ok, output = _run_git(["worktree", "list", "--porcelain"])
+    if not ok:
+        return {}, f"cannot read Git worktree registry: {output}"
+    entries: dict[Path, dict[str, str]] = {}
+    current: dict[str, str] = {}
+    for line in output.splitlines() + [""]:
+        if not line:
+            raw_path = current.get("worktree")
+            if raw_path:
+                entries[Path(raw_path).resolve()] = current
+            current = {}
+            continue
+        key, _, value = line.partition(" ")
+        current[key] = value
+    return entries, None
+
+
+def _registered_worktree(name: str) -> tuple[Path | None, str | None]:
+    try:
+        path = _worktree_path(name)
+    except ValueError as e:
+        return None, str(e)
+    entries, error = _registered_worktrees()
+    if error:
+        return None, error
+    if path not in entries:
+        return None, f"worktree '{name}' is not registered with Git"
+    if not path.is_dir():
+        return None, f"worktree '{name}' is missing at {path}"
+    expected_branch = f"refs/heads/{_worktree_branch(name)}"
+    if entries[path].get("branch") != expected_branch:
+        return None, (f"worktree '{name}' is not registered on expected "
+                      f"branch '{_worktree_branch(name)}'")
+    return path, None
+
+
+def task_worktree_cwd(task: Task) -> tuple[Path, str | None]:
+    """Resolve a task's working directory, failing closed on a broken
+    worktree binding instead of silently falling back to WORKDIR."""
+    if not task.worktree:
+        return WORKDIR, None
+    path, error = _registered_worktree(task.worktree)
+    return (path or WORKDIR), error
+
+
+def assignment_cwd(owner: str) -> Path:
+    with _task_lock:
+        assignment = teammate_assignments.get(owner)
+        task = _owner_in_progress(owner)
+        if task and (not assignment or assignment.get("task_id") != task.id):
+            cwd, error = task_worktree_cwd(task)
+            if error:
+                raise ValueError(error)
+            assignment = {"task_id": task.id, "cwd": cwd}
+            teammate_assignments[owner] = assignment
+        elif not assignment:
+            return WORKDIR
+        task = load_task(str(assignment["task_id"]))
+        if task.status not in {"in_progress", "completed"} or task.owner != owner:
+            raise ValueError(f"Assignment for {owner} is no longer active")
+        cwd, error = task_worktree_cwd(task)
+        if error:
+            raise ValueError(error)
+        if cwd.resolve() != Path(assignment["cwd"]).resolve():
+            raise ValueError(f"Assignment cwd changed for task {task.id}")
+        return cwd
+
+
+def release_completed_assignment(owner: str) -> bool:
+    """Release a completed cwd lease only at a model turn boundary."""
+    with _task_lock:
+        assignment = teammate_assignments.get(owner)
+        if not assignment:
+            return False
+        task = load_task(str(assignment["task_id"]))
+        if task.status != "completed" or task.owner != owner:
+            return False
+        teammate_assignments.pop(owner, None)
+        advance_assignment_version(owner)
+        gates = globals().get("plan_gates")
+        if isinstance(gates, dict) and owner in gates:
+            gates[owner] = "not_required"
+        return True
+
+
+def release_teammate_assignment(owner: str):
+    """Return abandoned teammate work to the task board on thread exit."""
+    with _task_lock:
+        try:
+            task = _owner_in_progress(owner)
+            if task:
+                task.status = "pending"
+                task.owner = None
+                TASKS.save(task)
+        finally:
+            teammate_assignments.pop(owner, None)
+            advance_assignment_version(owner)
+            gates = globals().get("plan_gates")
+            if isinstance(gates, dict) and owner in gates:
+                gates[owner] = "not_required"
 
 
 # -- Tools --
@@ -961,14 +1177,14 @@ atexit.register(_stop_all_shell_processes)
 signal.signal(signal.SIGTERM, _handle_termination_signal)
 
 
-def _run_bash_process(command: str) -> tuple[str, int | None]:
+def _run_bash_process(command: str, cwd: Path | None = None) -> tuple[str, int | None]:
     """Run a command in its own process group so it can be tracked and killed
     independently of the shell that spawned it (needed once bash calls can
     run unattended in a background thread)."""
     process = None
     try:
         process = subprocess.Popen(
-            command, shell=True, cwd=WORKDIR,
+            command, shell=True, cwd=cwd or WORKDIR,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, errors="replace", start_new_session=True,
         )
@@ -992,14 +1208,23 @@ def _run_bash_process(command: str) -> tuple[str, int | None]:
                 _shell_processes.discard(process)
 
 
-def run_bash(command: str, run_in_background: bool = False) -> str:
-    output, _exit_code = _run_bash_process(command)
+def run_bash(command: str, run_in_background: bool = False,
+             cwd: Path | None = None) -> str:
+    output, _exit_code = _run_bash_process(command, cwd)
     return output
 
 
-def run_read(path: str, limit: int | None = None) -> str:
+def safe_path(path: str, cwd: Path | None = None) -> Path:
+    base = (cwd or WORKDIR).resolve()
+    resolved = (base / path).resolve()
+    if not resolved.is_relative_to(base):
+        raise ValueError(f"Path escapes workspace: {path}")
+    return resolved
+
+
+def run_read(path: str, limit: int | None = None, cwd: Path | None = None) -> str:
     try:
-        lines = (WORKDIR / path).resolve().read_text(encoding="utf-8").splitlines()
+        lines = safe_path(path, cwd).read_text(encoding="utf-8").splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
         return "\n".join(lines)
@@ -1007,9 +1232,9 @@ def run_read(path: str, limit: int | None = None) -> str:
         return f"Error: {e}"
 
 
-def run_write(path: str, content: str) -> str:
+def run_write(path: str, content: str, cwd: Path | None = None) -> str:
     try:
-        file_path = (WORKDIR / path).resolve()
+        file_path = safe_path(path, cwd)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} bytes to {path}"
@@ -1017,9 +1242,9 @@ def run_write(path: str, content: str) -> str:
         return f"Error: {e}"
 
 
-def run_edit(path: str, old_text: str, new_text: str) -> str:
+def run_edit(path: str, old_text: str, new_text: str, cwd: Path | None = None) -> str:
     try:
-        file_path = (WORKDIR / path).resolve()
+        file_path = safe_path(path, cwd)
         text = file_path.read_text(encoding="utf-8")
         if old_text not in text:
             return f"Error: text not found in {path}"
@@ -1029,12 +1254,13 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         return f"Error: {e}"
 
 
-def run_glob(pattern: str) -> str:
+def run_glob(pattern: str, cwd: Path | None = None) -> str:
     try:
+        base = cwd or WORKDIR
         matches = sorted({
             match for match in glob.glob(
-                pattern, root_dir=WORKDIR, recursive=True)
-            if (WORKDIR / match).resolve().is_relative_to(WORKDIR)
+                pattern, root_dir=base, recursive=True)
+            if (base / match).resolve().is_relative_to(base.resolve())
         })
         shown = matches[:200]
         if len(matches) > 200:
@@ -1042,6 +1268,38 @@ def run_glob(pattern: str) -> str:
         return "\n".join(shown) if shown else "(no matches)"
     except Exception as e:
         return f"Error: {e}"
+
+
+def _agent_cwd() -> tuple[Path | None, str | None]:
+    try:
+        return assignment_cwd("agent"), None
+    except (FileNotFoundError, ValueError) as e:
+        return None, f"Error: Invalid task assignment: {e}"
+
+
+def run_agent_bash(command: str, run_in_background: bool = False) -> str:
+    cwd, error = _agent_cwd()
+    return error or run_bash(command, cwd=cwd)
+
+
+def run_agent_read(path: str, limit: int | None = None) -> str:
+    cwd, error = _agent_cwd()
+    return error or run_read(path, limit, cwd)
+
+
+def run_agent_write(path: str, content: str) -> str:
+    cwd, error = _agent_cwd()
+    return error or run_write(path, content, cwd)
+
+
+def run_agent_edit(path: str, old_text: str, new_text: str) -> str:
+    cwd, error = _agent_cwd()
+    return error or run_edit(path, old_text, new_text, cwd)
+
+
+def run_agent_glob(pattern: str) -> str:
+    cwd, error = _agent_cwd()
+    return error or run_glob(pattern, cwd)
 
 
 def run_create_task(subject: str, description: str = "") -> str:
@@ -1108,6 +1366,9 @@ class BackgroundManager:
         command = block.input.get("command")
         if not isinstance(command, str) or not command.strip():
             raise ValueError("Bash command cannot be empty")
+        cwd, cwd_error = _agent_cwd()
+        if cwd_error:
+            raise ValueError(cwd_error)
 
         with self._lock:
             self._counter += 1
@@ -1118,7 +1379,7 @@ class BackgroundManager:
                 "status": "running",
             }
 
-        thread = threading.Thread(target=self._run, args=(task_id, command), daemon=True)
+        thread = threading.Thread(target=self._run, args=(task_id, command, cwd), daemon=True)
         try:
             thread.start()
         except Exception:
@@ -1128,9 +1389,9 @@ class BackgroundManager:
         print(f"  [background] started {task_id}: {command[:60]}")
         return task_id
 
-    def _run(self, task_id: str, command: str):
+    def _run(self, task_id: str, command: str, cwd: Path | None = None):
         try:
-            output, exit_code = _run_bash_process(command)
+            output, exit_code = _run_bash_process(command, cwd)
             status = "completed" if exit_code == 0 else "failed"
         except Exception as e:
             output = f"Error: {type(e).__name__}: {e}"
@@ -1532,6 +1793,623 @@ def run_cancel_cron(job_id: str) -> str:
     return cancel_job(job_id)
 
 
+# -- Agent teams --
+
+MAILBOX_DIR = WORKDIR / ".mailboxes"
+MAILBOX_ROOT = MAILBOX_DIR.resolve()
+VALID_AGENT_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+RESERVED_TEAMMATE_NAMES = {"lead", "agent"}
+
+
+def is_valid_agent_name(name: str) -> bool:
+    return bool(VALID_AGENT_NAME.fullmatch(name))
+
+
+class MessageBus:
+    """Thread-safe file mailboxes (.mailboxes/*.jsonl) with destructive reads."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._changed = threading.Condition(self._lock)
+
+    def _path(self, agent: str) -> Path:
+        if not is_valid_agent_name(agent):
+            raise ValueError(f"Invalid mailbox recipient: {agent!r}")
+        path = (MAILBOX_DIR / f"{agent}.jsonl").resolve()
+        if not path.is_relative_to(MAILBOX_ROOT):
+            raise ValueError(f"Mailbox path escapes directory: {agent!r}")
+        return path
+
+    def _read_unlocked(self, agent: str) -> list[dict]:
+        inbox = self._path(agent)
+        if not inbox.exists():
+            return []
+        messages = [json.loads(line)
+                   for line in inbox.read_text(encoding="utf-8").splitlines()
+                   if line.strip()]
+        inbox.unlink()
+        return messages
+
+    def send(self, from_agent: str, to_agent: str, content: str,
+             msg_type: str = "message", metadata: dict | None = None):
+        message = {"from": from_agent, "to": to_agent,
+                   "content": content, "type": msg_type,
+                   "ts": time.time(), "metadata": metadata or {}}
+        with self._changed:
+            MAILBOX_DIR.mkdir(parents=True, exist_ok=True)
+            with self._path(to_agent).open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=True) + "\n")
+            self._changed.notify_all()
+        print(f"  [bus] {from_agent} -> {to_agent}: ({msg_type}) {content[:50]}")
+
+    def read_inbox(self, agent: str) -> list[dict]:
+        with self._lock:
+            return self._read_unlocked(agent)
+
+    def peek(self, agent: str) -> bool:
+        with self._lock:
+            inbox = self._path(agent)
+            return inbox.exists() and inbox.stat().st_size > 0
+
+    def wait_for_messages(self, agent: str,
+                          timeout: float | None = None) -> list[dict]:
+        """Block until the agent has messages or timeout expires."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._changed:
+            while not self.peek(agent):
+                remaining = (None if deadline is None
+                            else deadline - time.monotonic())
+                if remaining is not None and remaining <= 0:
+                    return []
+                self._changed.wait(remaining)
+            return self._read_unlocked(agent)
+
+
+BUS = MessageBus()
+
+# working | waiting_approval | idle | stopping
+active_teammates: dict[str, str] = {}
+plan_gates: dict[str, str] = {}
+plan_request_ids: dict[str, str] = {}
+team_lock = threading.RLock()
+
+
+@dataclass
+class ProtocolState:
+    request_id: str
+    type: str
+    sender: str
+    target: str
+    status: str
+    payload: str
+    work_version: int | None = None
+    task_id: str | None = None
+    created_at: float = field(default_factory=time.time)
+
+
+pending_requests: dict[str, ProtocolState] = {}
+
+
+def new_request_id() -> str:
+    while True:
+        request_id = f"req_{random.randint(0, 999999):06d}"
+        if request_id not in pending_requests:
+            return request_id
+
+
+def match_response(response_type: str, request_id: str, approve: bool,
+                   from_agent: str, to_agent: str) -> bool:
+    """Match one protocol response (shutdown or plan approval) to one
+    pending request Lead itself issued."""
+    with team_lock:
+        state = pending_requests.get(request_id)
+        if not state:
+            print(f"  [protocol] unknown request_id: {request_id}")
+            return False
+        expected = {
+            "shutdown": "shutdown_response",
+            "plan_approval": "plan_approval_response",
+        }[state.type]
+        if response_type != expected:
+            print(f"  [protocol] expected {expected}, got {response_type}")
+            return False
+        if from_agent != state.target or to_agent != state.sender:
+            print(f"  [protocol] {request_id} responder mismatch")
+            return False
+        if state.status != "pending":
+            print(f"  [protocol] {request_id} already {state.status}")
+            return False
+        state.status = "approved" if approve else "rejected"
+    print(f"  [protocol] {request_id} -> {state.status}")
+    return True
+
+
+def consume_lead_inbox() -> list[dict]:
+    """Consume Lead's mailbox and update protocol state before delivery."""
+    messages = BUS.read_inbox("lead")
+    for message in messages:
+        metadata = message.get("metadata", {})
+        request_id = metadata.get("request_id", "")
+        if request_id and message.get("type", "").endswith("_response"):
+            match_response(message["type"], request_id,
+                           metadata.get("approve", False),
+                           message.get("from", ""), message.get("to", ""))
+    return messages
+
+
+def format_team_events(messages: list[dict]) -> str:
+    lines = []
+    for message in messages:
+        metadata = message.get("metadata", {})
+        request_id = metadata.get("request_id")
+        suffix = f" request_id={request_id}" if request_id else ""
+        lines.append(f"[{message['type']}{suffix}] {message['from']}: {message['content']}")
+    return "[Team events]\n" + "\n".join(lines)
+
+
+def _last_assistant_text(content) -> str:
+    for block in content:
+        if getattr(block, "type", None) == "text":
+            return block.text.strip()
+        if isinstance(block, dict) and block.get("type") == "text":
+            return str(block.get("text", "")).strip()
+    return ""
+
+
+def current_work_identity(owner: str) -> tuple[int, str | None]:
+    with _task_lock:
+        assignment = teammate_assignments.get(owner)
+        task_id = str(assignment["task_id"]) if assignment else None
+        return assignment_versions.get(owner, 0), task_id
+
+
+def _teammate_submit_plan(from_name: str, plan: str) -> str:
+    with _task_lock:
+        assignment = teammate_assignments.get(from_name)
+        task_id = str(assignment["task_id"]) if assignment else None
+        work_version = assignment_versions.get(from_name, 0)
+        with team_lock:
+            if plan_gates.get(from_name) == "pending":
+                return "A plan is already waiting for review."
+            request_id = new_request_id()
+            pending_requests[request_id] = ProtocolState(
+                request_id=request_id, type="plan_approval",
+                sender=from_name, target="lead", status="pending",
+                payload=plan, work_version=work_version, task_id=task_id,
+            )
+            plan_gates[from_name] = "pending"
+            plan_request_ids[from_name] = request_id
+            active_teammates[from_name] = "waiting_approval"
+    BUS.send(from_name, "lead", plan, "plan_approval_request", {"request_id": request_id})
+    return f"Plan submitted ({request_id}). Wait for Lead's decision."
+
+
+def _run_teammate_tool(name: str, block, handlers: dict) -> str:
+    """A teammate's dispatcher: never prompts (it has no terminal to prompt
+    on), so it fails closed on anything the interactive hook would ask
+    about, and gates workspace changes on an approved plan when required."""
+    gate = plan_gates.get(name, "not_required")
+    if block.name in {"bash", "write_file", "edit_file"}:
+        if gate != "approved" and gate != "not_required":
+            return (f"Blocked: plan status is {gate}. Submit or revise the "
+                    "plan and wait for approval before changing the workspace.")
+        blocked = check_permission(block, prompt_user=False)
+        if blocked:
+            return blocked
+    handler = handlers.get(block.name)
+    if not handler:
+        return f"Unknown tool: {block.name}"
+    trigger_hooks("PreToolUse", block, skip_permission=True)
+    try:
+        output = str(handler(**block.input))
+    except Exception as e:
+        output = f"Error: {type(e).__name__}: {e}"
+    trigger_hooks("PostToolUse", block, output)
+    return output
+
+
+def apply_plan_response(name: str, msg: dict) -> tuple[bool, str]:
+    """Apply only the Lead response matching this teammate's current plan."""
+    metadata = msg.get("metadata", {})
+    request_id = metadata.get("request_id", "")
+    work_version, task_id = current_work_identity(name)
+    with team_lock:
+        state = pending_requests.get(request_id)
+        expected_id = plan_request_ids.get(name)
+        valid = (
+            msg.get("from") == "lead"
+            and msg.get("to") == name
+            and request_id == expected_id
+            and state is not None
+            and state.type == "plan_approval"
+            and state.sender == name
+            and state.target == "lead"
+            and state.work_version == work_version
+            and state.task_id == task_id
+            and state.status in {"approved", "rejected"}
+            and metadata.get("approve", False) == (state.status == "approved")
+        )
+        if not valid:
+            return False, "[Ignored plan response: request mismatch]"
+        plan_gates[name] = state.status
+        active_teammates[name] = "working"
+        plan_request_ids.pop(name, None)
+        outcome = state.status
+    return True, f"[Plan {outcome}] {msg['content']}"
+
+
+def apply_shutdown_request(name: str, msg: dict) -> tuple[bool, str]:
+    """Accept only a pending shutdown request sent by Lead to this teammate."""
+    request_id = msg.get("metadata", {}).get("request_id", "")
+    with team_lock:
+        state = pending_requests.get(request_id)
+        valid = (
+            msg.get("from") == "lead"
+            and msg.get("to") == name
+            and state is not None
+            and state.type == "shutdown"
+            and state.sender == "lead"
+            and state.target == name
+            and state.status == "pending"
+            and active_teammates.get(name) != "stopping"
+        )
+        if not valid:
+            return False, "[Ignored shutdown request: request mismatch]"
+        active_teammates[name] = "stopping"
+    return True, request_id
+
+
+def _teammate_send_message(from_name: str, to: str, content: str) -> str:
+    with team_lock:
+        if to != "lead" and to not in active_teammates:
+            return f"Agent '{to}' is not active"
+    BUS.send(from_name, to, content)
+    return f"Sent to {to}"
+
+
+IDLE_SCAN_INTERVAL = 2.0
+
+
+def scan_unclaimed_tasks() -> list[Task]:
+    """Return ready tasks whose optional worktree binding is usable."""
+    with _task_lock:
+        ready = []
+        for task in list_tasks():
+            if (task.status != "pending" or task.owner is not None
+                    or not can_start(task.id)):
+                continue
+            _, error = task_worktree_cwd(task)
+            if not error:
+                ready.append(task)
+        return ready
+
+
+def claim_next_task(name: str) -> Task | None:
+    """Claim the first still-available task, never a second assignment."""
+    with _task_lock:
+        if teammate_assignments.get(name) or _owner_in_progress(name):
+            return None
+    for task in scan_unclaimed_tasks():
+        result = claim_task(task.id, owner=name)
+        if result.startswith("Claimed "):
+            return load_task(task.id)
+    return None
+
+
+class TeammateRuntime:
+    """One persistent teammate with its own messages and WORK/IDLE phases."""
+
+    def __init__(self, name: str, role: str, prompt: str,
+                task_id: str | None, require_plan: bool):
+        self.name = name
+        self.system = (
+            f"You are '{name}', a {role}. Use tools to complete the assigned "
+            "Task, then call complete_task and report a concise result. "
+            "If the first user message contains [Assigned task], that Task is "
+            "already claimed; do not call claim_task for it again. "
+            "When asked for a plan, call submit_plan and wait for approval "
+            "before bash or file changes. File and shell tools use the Task's "
+            "working directory; that directory is not a sandbox. The runtime "
+            "delivers your final text to Lead. Use send_message only for "
+            "intermediate coordination, and address the coordinator as 'lead'."
+        )
+        self.messages = [{"role": "user", "content": prompt}]
+        if task_id:
+            task = load_task(task_id)
+            cwd = assignment_cwd(name)
+            self.messages[0]["content"] += (
+                f"\n\n[Assigned task {task.id}] {task.subject}\n"
+                f"{task.description}\nWork directory: {cwd}"
+            )
+        if require_plan:
+            self.messages[0]["content"] += (
+                "\n\n[Plan required] Submit a plan and wait for Lead approval "
+                "before changing files or using bash."
+            )
+        self.handlers = {
+            "bash": self.bash,
+            "read_file": self.read,
+            "write_file": self.write,
+            "edit_file": self.edit,
+            "glob": self.glob,
+            "send_message": lambda to, content: _teammate_send_message(name, to, content),
+            "submit_plan": lambda plan: _teammate_submit_plan(name, plan),
+            "list_tasks": run_list_tasks,
+            "claim_task": self.claim,
+            "complete_task": self.complete,
+        }
+
+    def current_cwd(self) -> tuple[Path | None, str | None]:
+        if self.name not in teammate_assignments:
+            return None, "Error: Claim a Task before using workspace tools."
+        try:
+            return assignment_cwd(self.name), None
+        except (FileNotFoundError, ValueError) as e:
+            return None, f"Error: Invalid task assignment: {e}"
+
+    def bash(self, command: str) -> str:
+        cwd, error = self.current_cwd()
+        return error or run_bash(command, cwd=cwd)
+
+    def read(self, path: str, limit: int | None = None) -> str:
+        cwd, error = self.current_cwd()
+        return error or run_read(path, limit=limit, cwd=cwd)
+
+    def write(self, path: str, content: str) -> str:
+        cwd, error = self.current_cwd()
+        return error or run_write(path, content, cwd=cwd)
+
+    def edit(self, path: str, old_text: str, new_text: str) -> str:
+        cwd, error = self.current_cwd()
+        return error or run_edit(path, old_text, new_text, cwd=cwd)
+
+    def glob(self, pattern: str) -> str:
+        cwd, error = self.current_cwd()
+        return error or run_glob(pattern, cwd=cwd)
+
+    def claim(self, task_id: str) -> str:
+        try:
+            return claim_task(task_id, owner=self.name)
+        except ValueError as e:
+            return f"Error: {e}"
+        except FileNotFoundError:
+            return f"Error: Task {task_id} not found"
+
+    def complete(self, task_id: str) -> str:
+        try:
+            return complete_task(task_id, owner=self.name)
+        except ValueError as e:
+            return f"Error: {e}"
+        except FileNotFoundError:
+            return f"Error: Task {task_id} not found"
+
+    def handle_inbox(self, inbox: list[dict]) -> bool:
+        """Append work messages and return True for a valid shutdown."""
+        work_messages = []
+        for msg in inbox:
+            msg_type = msg.get("type", "message")
+            if msg_type == "shutdown_request":
+                accepted, notice = apply_shutdown_request(self.name, msg)
+                if not accepted:
+                    work_messages.append(notice)
+                    continue
+                BUS.send(self.name, "lead", "Shutdown acknowledged.",
+                        "shutdown_response", {"request_id": notice, "approve": True})
+                return True
+            if msg_type == "plan_approval_response":
+                _, notice = apply_plan_response(self.name, msg)
+                work_messages.append(notice)
+                continue
+            if msg_type == "plan_request":
+                work_messages.append(f"[Plan required] {msg['content']}")
+                continue
+            work_messages.append(f"[Message from {msg['from']}] {msg['content']}")
+        if work_messages:
+            self.messages.append({"role": "user", "content": "\n".join(work_messages)})
+        return False
+
+    def work(self) -> str:
+        """Run one model turn. Return continue, idle, or stop."""
+        if self.handle_inbox(BUS.read_inbox(self.name)):
+            return "stop"
+        with team_lock:
+            active_teammates[self.name] = "working"
+        try:
+            response = client.messages.create(
+                model=MODEL, system=self.system, messages=self.messages,
+                tools=TEAMMATE_TOOLS, max_tokens=8000,
+            )
+        except Exception as e:
+            BUS.send(self.name, "lead", f"{type(e).__name__}: {e}", "error")
+            return "stop"
+
+        self.messages.append({"role": "assistant", "content": response.content})
+        tool_calls = [block for block in response.content if block.type == "tool_use"]
+        if tool_calls:
+            results = []
+            for block in tool_calls:
+                output = _run_teammate_tool(self.name, block, self.handlers)
+                results.append({"type": "tool_result", "tool_use_id": block.id,
+                                "content": output})
+            self.messages.append({"role": "user", "content": results})
+            return "continue"
+
+        summary = _last_assistant_text(response.content)
+        gate = plan_gates.get(self.name, "not_required")
+        if gate != "pending" and summary:
+            BUS.send(self.name, "lead", summary, "result")
+        if gate == "pending":
+            with team_lock:
+                active_teammates[self.name] = "waiting_approval"
+        else:
+            release_completed_assignment(self.name)
+            with team_lock:
+                active_teammates[self.name] = "idle"
+            BUS.send(self.name, "lead", "Waiting for more work.", "idle_notification")
+        return "idle"
+
+    def wait_for_work(self) -> bool:
+        """Wait for a message or atomically claim the next ready Task."""
+        while True:
+            inbox = BUS.wait_for_messages(self.name, IDLE_SCAN_INTERVAL)
+            if inbox:
+                before = len(self.messages)
+                if self.handle_inbox(inbox):
+                    return False
+                if len(self.messages) > before:
+                    return True
+                continue
+
+            task = claim_next_task(self.name)
+            if not task:
+                continue
+            cwd = assignment_cwd(self.name)
+            self.messages.append({
+                "role": "user",
+                "content": (f"[Auto-claimed task {task.id}] {task.subject}\n"
+                           f"{task.description}\nWork directory: {cwd}"),
+            })
+            print(f"  [idle] {self.name} claimed {task.id}: {task.subject}")
+            return True
+
+    def run(self):
+        try:
+            state = "continue"
+            while state != "stop":
+                if state == "idle" and not self.wait_for_work():
+                    break
+                state = self.work()
+        except Exception as e:
+            try:
+                BUS.send(self.name, "lead", f"{type(e).__name__}: {e}", "error")
+            except Exception:
+                pass
+        finally:
+            try:
+                release_teammate_assignment(self.name)
+            except Exception as e:
+                try:
+                    BUS.send(self.name, "lead",
+                            f"Assignment cleanup failed: {type(e).__name__}: {e}", "error")
+                except Exception:
+                    pass
+            with team_lock:
+                active_teammates.pop(self.name, None)
+                plan_gates.pop(self.name, None)
+                plan_request_ids.pop(self.name, None)
+                teammate_threads.pop(self.name, None)
+            print(f"  [teammate] {self.name} finished")
+
+
+teammate_threads: dict[str, threading.Thread] = {}
+
+
+def spawn_teammate_thread(name: str, role: str, prompt: str,
+                          task_id: str | None = None,
+                          require_plan: bool = False) -> str:
+    """Claim an initial Task, then start one persistent teammate thread."""
+    if not is_valid_agent_name(name):
+        return "Invalid teammate name: use 1-64 letters, digits, underscores, or dashes"
+    if name.lower() in RESERVED_TEAMMATE_NAMES:
+        return f"Invalid teammate name: '{name}' is reserved by the runtime"
+    with team_lock:
+        if any(existing.casefold() == name.casefold() for existing in active_teammates):
+            return f"Teammate '{name}' already exists"
+        active_teammates[name] = "working"
+        plan_gates[name] = "required" if require_plan else "not_required"
+        assignment_versions[name] = 0
+
+    if task_id:
+        try:
+            claimed = claim_task(task_id, owner=name)
+        except (FileNotFoundError, ValueError) as e:
+            claimed = f"Error: {e}"
+        if not claimed.startswith("Claimed "):
+            with team_lock:
+                active_teammates.pop(name, None)
+                plan_gates.pop(name, None)
+                assignment_versions.pop(name, None)
+            return f"Cannot spawn teammate '{name}': {claimed}"
+
+    runtime = TeammateRuntime(name, role, prompt, task_id, require_plan)
+    thread = threading.Thread(target=runtime.run, daemon=True)
+    with team_lock:
+        teammate_threads[name] = thread
+    thread.start()
+    print(f"  [teammate] {name} spawned as {role}")
+    assigned = f" for {task_id}" if task_id else " without an initial Task"
+    return (f"Teammate '{name}' spawned as {role}{assigned}. "
+           "End this turn; the runtime will deliver its events.")
+
+
+def run_spawn_teammate(name: str, role: str, prompt: str,
+                       task_id: str | None = None,
+                       require_plan: bool = False) -> str:
+    return spawn_teammate_thread(name, role, prompt, task_id, require_plan)
+
+
+def run_list_teammates() -> str:
+    with team_lock:
+        if not active_teammates:
+            return "No active teammates."
+        return "\n".join(f"{name}: {status}"
+                         for name, status in sorted(active_teammates.items()))
+
+
+def run_send_message(to: str, content: str) -> str:
+    if to not in active_teammates:
+        return f"Teammate '{to}' is not active"
+    BUS.send("lead", to, content)
+    return f"Sent to {to}"
+
+
+def run_request_shutdown(teammate: str) -> str:
+    if teammate not in active_teammates:
+        return f"Teammate '{teammate}' is not active"
+    with team_lock:
+        request_id = new_request_id()
+        pending_requests[request_id] = ProtocolState(
+            request_id=request_id, type="shutdown", sender="lead",
+            target=teammate, status="pending", payload="",
+        )
+    BUS.send("lead", teammate, "Finish the current step and shut down.",
+             "shutdown_request", {"request_id": request_id})
+    return f"Shutdown requested from {teammate} ({request_id})"
+
+
+def run_request_plan(teammate: str, task: str) -> str:
+    if teammate not in active_teammates:
+        return f"Teammate '{teammate}' is not active"
+    with team_lock:
+        plan_gates[teammate] = "required"
+    BUS.send("lead", teammate, task, "plan_request")
+    return f"Plan requested from {teammate}"
+
+
+def run_review_plan(request_id: str, approve: bool, feedback: str = "") -> str:
+    state = pending_requests.get(request_id)
+    if not state:
+        return f"Request {request_id} not found"
+    work_version, task_id = current_work_identity(state.sender)
+    with team_lock:
+        state = pending_requests.get(request_id)
+        if not state:
+            return f"Request {request_id} not found"
+        if state.type != "plan_approval":
+            return f"Request {request_id} is not a plan"
+        if state.status != "pending":
+            return f"Request {request_id} already {state.status}"
+        if state.work_version != work_version or state.task_id != task_id:
+            return f"Request {request_id} belongs to an earlier assignment"
+        if plan_request_ids.get(state.sender) != request_id:
+            return f"Request {request_id} is not the current plan"
+        state.status = "approved" if approve else "rejected"
+    content = feedback or ("Plan approved." if approve else "Revise the plan and submit it again.")
+    BUS.send("lead", state.sender, content, "plan_approval_response",
+             {"request_id": request_id, "approve": approve})
+    return f"Plan {state.status} ({request_id})"
+
+
 BASE_TOOLS = [
     {"name": "bash", "description": "Run a shell command. Set run_in_background "
      "to true for a long, independent command; it runs in the background and "
@@ -1583,14 +2461,55 @@ CRON_TOOLS = [
     {"name": "cancel_cron", "description": "Cancel a cron job by ID.",
      "input_schema": {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}},
 ]
-TOOLS = [*BASE_TOOLS, SKILL_TOOL, COMPACT_TOOL, *TASK_TOOLS, *CRON_TOOLS]
+TEAMMATE_TOOLS = [
+    {"name": "bash", "description": "Run a shell command in the Task's working directory.",
+     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+    {"name": "read_file", "description": "Read file contents.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
+    {"name": "write_file", "description": "Write content to a file.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
+    {"name": "edit_file", "description": "Replace exact text in a file once.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
+    {"name": "glob", "description": "Find files matching a glob pattern; ** matches recursively.",
+     "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}},
+    {"name": "send_message", "description": "Send an intermediate message to 'lead' or an active teammate.",
+     "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "content": {"type": "string"}}, "required": ["to", "content"]}},
+    {"name": "submit_plan", "description": "Submit a work plan for Lead approval.",
+     "input_schema": {"type": "object", "properties": {"plan": {"type": "string"}}, "required": ["plan"]}},
+    {"name": "list_tasks", "description": "List tasks with status, owner, and dependencies.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "claim_task", "description": "Claim a pending task whose dependencies are complete.",
+     "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]}},
+    {"name": "complete_task", "description": "Complete the task claimed by this teammate.",
+     "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]}},
+]
+TEAM_TOOLS = [
+    {"name": "spawn_teammate", "description": "Spawn a persistent teammate.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+         "role": {"type": "string"}, "prompt": {"type": "string"},
+         "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{8}$"},
+         "require_plan": {"type": "boolean"}},
+         "required": ["name", "role", "prompt"]}},
+    {"name": "list_teammates", "description": "List active teammates.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "send_message", "description": "Send a message to an active teammate.",
+     "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "content": {"type": "string"}}, "required": ["to", "content"]}},
+    {"name": "request_shutdown", "description": "Ask a teammate to finish its current step and shut down.",
+     "input_schema": {"type": "object", "properties": {"teammate": {"type": "string"}}, "required": ["teammate"]}},
+    {"name": "request_plan", "description": "Require a teammate to submit a plan before it changes the workspace.",
+     "input_schema": {"type": "object", "properties": {"teammate": {"type": "string"}, "task": {"type": "string"}}, "required": ["teammate", "task"]}},
+    {"name": "review_plan", "description": "Approve or reject a teammate's submitted plan.",
+     "input_schema": {"type": "object", "properties": {"request_id": {"type": "string"}, "approve": {"type": "boolean"}, "feedback": {"type": "string"}}, "required": ["request_id", "approve"]}},
+]
+TOOLS = [*BASE_TOOLS, SKILL_TOOL, COMPACT_TOOL, *TASK_TOOLS, *CRON_TOOLS, *TEAM_TOOLS]
 
 TOOL_HANDLERS = {
-    "bash": run_bash,
-    "read_file": run_read,
-    "write_file": run_write,
-    "edit_file": run_edit,
-    "glob": run_glob,
+    "bash": run_agent_bash,
+    "read_file": run_agent_read,
+    "write_file": run_agent_write,
+    "edit_file": run_agent_edit,
+    "glob": run_agent_glob,
     "load_skill": SKILL_LOADER.load,
     "create_task": run_create_task,
     "update_task": run_update_task,
@@ -1601,6 +2520,12 @@ TOOL_HANDLERS = {
     "schedule_cron": run_schedule_cron,
     "list_crons": run_list_crons,
     "cancel_cron": run_cancel_cron,
+    "spawn_teammate": run_spawn_teammate,
+    "list_teammates": run_list_teammates,
+    "send_message": run_send_message,
+    "request_shutdown": run_request_shutdown,
+    "request_plan": run_request_plan,
+    "review_plan": run_review_plan,
     # "compact" is intentionally absent: agent_loop intercepts it before
     # dispatch so compaction runs after the full tool batch is recorded.
 }
@@ -1615,8 +2540,10 @@ def register_hook(event: str, callback):
     HOOKS[event].append(callback)
 
 
-def trigger_hooks(event: str, *args):
+def trigger_hooks(event: str, *args, skip_permission: bool = False):
     for callback in HOOKS[event]:
+        if skip_permission and callback is permission_hook:
+            continue
         result = callback(*args)
         if result is not None:
             return result
@@ -1634,8 +2561,25 @@ def contains_destructive_command(command: str) -> bool:
     return bool(DESTRUCTIVE_COMMAND_WORD.search(command))
 
 
-def permission_hook(block):
-    """PreToolUse: block denied operations and ask about risky ones."""
+def request_permission(block, reason: str) -> str | None:
+    # A cron-triggered turn or a teammate thread has no terminal to prompt
+    # on; input() there would either block forever or race the real
+    # interactive prompt for stdin, so a background thread fails closed.
+    if threading.current_thread() is not threading.main_thread():
+        return ("Permission denied: this turn is running off the main "
+                "thread (a scheduled or teammate turn) and cannot prompt "
+                "for approval.")
+    print(f"\n\033[33m[permission] {reason}\033[0m")
+    print(f"   Tool: {block.name}({block.input})")
+    choice = input("   Allow? [y/N] ").strip().lower()
+    if choice not in ("y", "yes"):
+        return "Permission denied by user"
+    return None
+
+
+def check_permission(block, prompt_user: bool = True) -> str | None:
+    """Shared by the Lead's interactive hook and a teammate's dispatcher
+    (which passes prompt_user=False so it never touches input())."""
     if block.name == "bash":
         command = block.input.get("command", "")
         for pattern in DENY_LIST:
@@ -1645,21 +2589,22 @@ def permission_hook(block):
         if contains_destructive_command(command) or any(
             keyword in command for keyword in DESTRUCTIVE
         ):
-            print("\n\033[33m[permission] Potentially destructive command\033[0m")
-            print(f"   Tool: {block.name}({block.input})")
-            choice = input("   Allow? [y/N] ").strip().lower()
-            if choice not in ("y", "yes"):
-                return "Permission denied by user"
+            if not prompt_user:
+                return "Permission required: ask lead to run this command."
+            return request_permission(block, "Potentially destructive command")
 
     if block.name in ("read_file", "write_file", "edit_file"):
         path = block.input.get("path", "")
         if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
-            print("\n\033[33m[permission] Access outside workspace\033[0m")
-            print(f"   Tool: {block.name}({block.input})")
-            choice = input("   Allow? [y/N] ").strip().lower()
-            if choice not in ("y", "yes"):
-                return "Permission denied by user"
+            if not prompt_user:
+                return "Permission required: path is outside the workspace."
+            return request_permission(block, "Access outside workspace")
     return None
+
+
+def permission_hook(block):
+    """PreToolUse: block denied operations and ask about risky ones."""
+    return check_permission(block, prompt_user=True)
 
 
 def log_hook(block):
@@ -2029,6 +2974,10 @@ def agent_loop(messages: list, active_request: str):
                 f"Run scheduled task: {job.prompt}" for job in fired)
             active_request = f"{active_request}\n{scheduled_requests}".strip()
 
+        team_events = consume_lead_inbox()
+        if team_events:
+            messages.append({"role": "user", "content": format_team_events(team_events)})
+
         inject_background_results(messages)
         messages[:] = COMPACTOR.prepare(messages, active_request)
         try:
@@ -2064,6 +3013,7 @@ def agent_loop(messages: list, active_request: str):
                 continue
             if extract_memories(messages):
                 consolidate_memories()
+            release_completed_assignment("agent")
             return
 
         results = []
