@@ -63,7 +63,7 @@ python skills/ms_process/scripts/split_ms_file.py \
     --group-field DATABASE_SEQUENCE \
     --seed 42 \
     --output-dir <split_out_dir> \
-    --val-file-dir Val_File
+    --val-file-dir <val_dir>
 ```
 
 **Checks `--val-file-dir` first to decide 2-way vs. 3-way** (this
@@ -113,10 +113,16 @@ This is exactly the column set `td_pred.py --input` expects -- most
 often you'll run this on a val-split `.msalign` file to build the
 prediction input for that held-out set.
 
-This project keeps validation-derived files under `Val_File/` at the
-project root (sibling to `MS_File/`, `skills/`, `code.py`) -- write the
-output TSV there (e.g. `Val_File/<name>_scans.tsv`) unless the user
-says otherwise.
+Write the output TSV to the same `<val_dir>` used for `--val-file-dir`
+above (e.g. `<val_dir>/<name>_scans.tsv`), so the test split and the
+scan TSV built from it stay together.
+
+**Resolving `<val_dir>`/`<split_out_dir>`**: don't assume a name -- if the
+user already has a location for this dataset's split/validation files, use
+that. `Val_File/` at the project root is this project's own default when
+starting fresh (sibling to `skills/`, `code.py`), but it's a suggestion,
+not a requirement; ask if it's genuinely unclear, and resolve it once per
+dataset rather than re-deriving it each run.
 
 ## Anti-Patterns
 
@@ -127,7 +133,7 @@ says otherwise.
 | Guessing a ratio other than the default (0.8 train/val, or 0.15 val/test) | May not be what the user wants | Confirm the ratio (and input path, if ambiguous) with the user first |
 | Assuming it's always a 2-way train/val split | Whether you get 2-way or 3-way depends on whether `<input>_test<ext>` already exists in `--val-file-dir` -- easy to miss on a first run | Read the "Found existing test set" / "No existing test set" line the script prints; don't assume from the command alone |
 | Copying either script elsewhere before running it | Meant to be invoked from its own path so the loader can find it consistently | Always call `skills/ms_process/scripts/<name>.py` in place |
-| Writing the scans TSV to a random/temp path | Makes it hard to find later, breaks the project's own convention | Write to `Val_File/` (see Tool 2 above) unless told otherwise |
+| Writing the scans TSV to a random/temp path instead of alongside the split it came from | Makes it hard to find later | Write next to `<val_dir>` (see Tool 2 above); resolve that path once, don't scatter outputs |
 
 ## Resources
 

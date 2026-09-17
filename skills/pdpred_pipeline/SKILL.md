@@ -35,15 +35,20 @@ been -- no `DATABASE_SEQUENCE` on the spectra yet -- that's the
 
 ## Pipeline
 
-Training and prediction outputs go under `Train_result/` and
-`Predict_result/` at the project root (sibling to `MS_File/`,
-`Val_File/`, `skills/`, `code.py`). Each run gets its own subfolder
-named after the dataset/species: `Train_result/Train_<name>/` for a
-training run, `Predict_result/Predict_<name>/` for a prediction run
-(e.g. training on human data -> `Train_result/Train_human/`). Create
-the subfolder (`mkdir -p`) before running the corresponding step
-below, and point that step's `--out`/`--output` and log redirect at
-it, so a run's model, log, and any per-run side files stay together.
+Give training and prediction runs their own folders, referred to below as
+`<train_dir>` and `<predict_dir>` -- point each step's `--out`/`--output`
+and log redirect at them, so a run's model, log, and any per-run side
+files stay together.
+
+**Resolving `<train_dir>`/`<predict_dir>`**: don't assume a name -- if the
+user already has a place they keep runs (or one already exists for this
+dataset/species), use that. `Train_result/Train_<name>/` and
+`Predict_result/Predict_<name>/` at the project root (e.g. training on
+human data -> `Train_result/Train_human/`) are this project's own default
+when starting fresh, but a suggestion, not a requirement -- ask if
+genuinely unclear. Whatever you land on, `mkdir -p` it once before running
+the corresponding step, and reuse the same path for that run rather than
+re-deriving it.
 
 ### 1. Convert each split to HDF5
 
@@ -75,14 +80,14 @@ a new species/dataset.
 ### 2. Train / fine-tune
 
 ```
-mkdir -p Train_result/Train_<name>
+mkdir -p <train_dir>
 
 python skills/pdpred_pipeline/script/train_td_pred.py \
     --train <split_out_dir>/train.h5 \
     --validate <split_out_dir>/val.h5 \
-    --out Train_result/Train_<name>/checkpoint.pth \
+    --out <train_dir>/checkpoint.pth \
     --max_length 200 \
-    2>&1 | tee Train_result/Train_<name>/train.log
+    2>&1 | tee <train_dir>/train.log
 ```
 
 - `--target` is `pep_bond` (default), `b_y`, or `charge`. **If this
@@ -102,13 +107,13 @@ python skills/pdpred_pipeline/script/train_td_pred.py \
 - Validation runs automatically every epoch -- no separate evaluate
   script exists. Each epoch prints train/val loss and cosine
   similarity (captured in `train.log` above via `tee`), and saves
-  `<out>_<epoch>`, i.e. `Train_result/Train_<name>/checkpoint.pth_<epoch>`.
+  `<out>_<epoch>`, i.e. `<train_dir>/checkpoint.pth_<epoch>`.
   Final checkpoint after all epochs: `checkpoint.pth_final`. One
   exception to the "everything lands in the run folder" rule:
   `similarity_<epoch>.tsv` is hardcoded to write to the process's
-  current working directory, not next to `--out` -- if you ran the
-  command above from the project root, collect it afterward with
-  `mv similarity_*.tsv Train_result/Train_<name>/`.
+  current working directory, not next to `--out` -- collect it
+  afterward with `mv similarity_*.tsv <train_dir>/` (from wherever you
+  ran the command).
 - The "Output shape ... (expected: ...)" sanity-check line printed
   before training starts is misleading for `b_y`/`charge` targets: it
   prints `output_len` alone, not `output_len * output_dim`, so for
@@ -122,29 +127,28 @@ python skills/pdpred_pipeline/script/train_td_pred.py \
 
 ```
 # a) get scan metadata into TSV -- use the ms_process skill's converter.
-#    If ms_process's splitter produced a 3-way split, Val_File/<name>_test.msalign
+#    If ms_process's splitter produced a 3-way split, <val_dir>/<name>_test.msalign
 #    exists -- use that for a genuinely held-out evaluation (val gets looked at
 #    every epoch during training, so it's not fully unseen). Otherwise use the
-#    val split -- check Val_File/ before assuming which one you have.
+#    val split -- check <val_dir> before assuming which one you have.
 python skills/ms_process/scripts/convert_msalign_to_tsv.py \
     <split_out_dir>/<name>_val.msalign \
-    Val_File/<name>_scans.tsv
+    <val_dir>/<name>_scans.tsv
 
 # b) predict spectra for every row in that TSV using a trained checkpoint
-mkdir -p Predict_result/Predict_<name>
+mkdir -p <predict_dir>
 
 python skills/pdpred_pipeline/script/td_pred.py \
-    --input Val_File/<name>_scans.tsv \
-    --model Train_result/Train_<name>/checkpoint.pth_final \
-    --output Predict_result/Predict_<name>/<name>_predictions.msalign \
-    2>&1 | tee Predict_result/Predict_<name>/predict.log
+    --input <val_dir>/<name>_scans.tsv \
+    --model <train_dir>/checkpoint.pth_final \
+    --output <predict_dir>/<name>_predictions.msalign \
+    2>&1 | tee <predict_dir>/predict.log
 ```
 
-The scans TSV from step (a) still goes under `Val_File/` at the
-project root (sibling to `MS_File/`, `skills/`, `code.py`) -- that
-convention is unchanged. The predicted spectra and this run's log
-now go to `Predict_result/Predict_<name>/` instead, per the
-Train_result/Predict_result convention above.
+`<val_dir>` here is the same directory `ms_process` resolved for the scan
+TSV -- reuse it rather than picking a new one. The predicted spectra and
+this run's log go to `<predict_dir>`, resolved the same way as `<train_dir>`
+above.
 
 ## Anti-Patterns
 
@@ -157,7 +161,7 @@ Train_result/Predict_result convention above.
 | Copying scripts elsewhere, or `cd`-ing into a different directory first | All scripts use flat sibling imports (e.g. `import model_data as md`) that rely on Python adding the invoked script's own directory to `sys.path` | Always invoke by full path under `skills/pdpred_pipeline/script/` |
 | Launching a full training run without warning the user | Can take hours; blocks the loop if run in the foreground | Confirm epoch count/expected runtime first, run in the background |
 | Running step 1 on a new species/dataset without checking sequence lengths | `encode_spectrum`/`spectrum_anno` raise `IndexError` and abort partway through the file if any `DATABASE_SEQUENCE` is longer than `--max_length` -- you lose the whole run, not just that one spectrum | Check the input's longest `DATABASE_SEQUENCE` against `--max_length` before running, or raise `--max_length` to cover it |
-| Writing a checkpoint/log/prediction straight to the project root or an ad-hoc path instead of the `Train_result`/`Predict_result` convention | Runs from different datasets/species pile up ungrouped -- hard to find or compare later | Always `mkdir -p Train_result/Train_<name>` (or `Predict_result/Predict_<name>`) first, and point `--out`/`--output` and the log `tee` at that folder |
+| Writing a checkpoint/log/prediction straight to the project root or scattering runs across ad-hoc paths | Runs from different datasets/species pile up ungrouped -- hard to find or compare later | Resolve `<train_dir>`/`<predict_dir>` once per run (see Pipeline above), `mkdir -p` it first, and point `--out`/`--output` and the log `tee` at it |
 
 ## Resources
 

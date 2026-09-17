@@ -125,24 +125,34 @@ this entirely and start at TopFD below.
 
 ## Pipeline
 
-Keep a dataset's raw file, mzML, and TopFD/TopPIC output together under
-`MS_File/<name>/` at the project root (sibling to `Val_File/`,
-`Train_result/`, `skills/`, `code.py` -- `ms_process`'s SKILL.md already
-references `MS_File/` as this project's convention for primary MS data).
-`toprepo_pipeline`'s Phase 1 reads directly from whatever ends up here.
+Keep a dataset's raw file, mzML, and TopFD/TopPIC output together in one
+directory, referred to below as `<ms_dir>` -- `toprepo_pipeline`'s Phase 1
+reads directly from whatever ends up here, so wherever you pick, use it
+consistently for the whole dataset.
+
+**Resolving `<ms_dir>`**: don't assume a name -- check first. If the user
+already has a folder for this dataset (they mentioned a path, or one
+already exists with matching files in it), use that. If you're starting
+fresh and nothing says otherwise, `MS_File/<name>/` at the project root is
+a reasonable default this project has used before (sibling to `skills/`,
+`code.py`) -- but treat it as a suggestion, not a requirement: a local
+setup may already keep raw MS data somewhere else entirely (a data drive,
+a folder per instrument run, whatever the user's lab already uses).
+Resolve it once (ask if genuinely ambiguous) and reuse the same path for
+every step below, rather than re-deriving or renaming mid-run.
 
 ### 1. msconvert -- raw file to mzML (see Prerequisites' caveat)
 
 General form (unverified this session, see above):
 ```
-msconvert <input>.raw --mzML -o MS_File/<name>/
+msconvert <input>.raw --mzML -o <ms_dir>
 ```
 Skip this step if the input is already mzML/mzXML.
 
 ### 2. TopFD -- deconvolute mzML/mzXML to msalign + feature files
 
 ```
-cd MS_File/<name>/
+cd <ms_dir>
 topfd -u <threads> <input>.mzML
 ```
 Verified with a real run (the mzXML test fixture bundled at
