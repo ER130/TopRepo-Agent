@@ -99,12 +99,17 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 ## Pipeline
 
-Work from one flat directory per dataset:
-`TopRepo_Result/TopRepo_<name>/` at the project root (sibling to
-`MS_File/`, `Val_File/`, `Train_result/`, `skills/`, `code.py`). `cd` into
-it and run every command below from there -- step 1.5 depends on this (see
-below), and it keeps a run's outputs together the same way
-`Train_result/Train_<name>/` does for `pdpred_pipeline`.
+Work from one flat directory per dataset, referred to below as
+`<toprepo_out_dir>`. `cd` into it and run every command below from there --
+step 1.5 depends on this (see below).
+
+**Resolving `<toprepo_out_dir>`**: don't assume a name -- check whether
+the user already has a location in mind or one already exists for this
+dataset before creating a new one. `TopRepo_Result/TopRepo_<name>/` at the
+project root is this project's own default when starting fresh (matching
+the `Train_result/Train_<name>/` pattern `pdpred_pipeline` uses), but it's
+a suggestion, not a requirement -- a local setup may keep things elsewhere.
+Resolve it once and reuse it for the whole run.
 
 `<dataset_id>` is any string you choose (TopRepo's own convention is a
 ProteomeXchange/MassIVE accession like `PXD029703`) -- **use the exact same

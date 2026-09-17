@@ -1,0 +1,17 @@
+# Runtime data/output folders -- these are per-user research data and
+# generated results, not code. See README.md "Data folder conventions".
+MS_File/
+Val_File/
+Train_result/
+Predict_result/
+TopRepo_Result/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Misc
+.env
+.DS_Store
