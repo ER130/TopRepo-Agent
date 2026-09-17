@@ -70,6 +70,25 @@ three have already produced their output; it does not run them. If the
 user doesn't have mzML + msalign + `.feature` + TopPIC PrSM TSV yet, use
 `toppic_suite` first rather than guessing at how to invoke TopFD/TopPIC here.
 
+## Before You Start
+
+**Plan first, then confirm.** Before running anything below, lay out the
+plan for the task -- which phase(s) apply, in what order, against which
+files and `<dataset_id>` -- and wait for the user to confirm it before
+executing. Catching a wrong assumption (wrong dataset_id, wrong input
+file, which annotation script) before any command runs is much cheaper
+than after, especially given how many steps here fail silently rather
+than loudly (see Core Philosophy).
+
+**Report before installing something new or touching a script.** The
+`pip install` lines already listed under Prerequisites are the expected
+setup -- run those without asking. But if you hit a dependency problem
+beyond what Prerequisites already covers, or if fixing something would
+mean editing a script -- including this skill's own `scripts/`, not just
+`vendor/` (never edit `vendor/` at all -- see Core Philosophy) -- stop and
+tell the user exactly what went wrong and what you're about to do about
+it. Wait for their response before continuing.
+
 ## Prerequisites
 
 **0. TopRepo's code is already here.** Vendored at

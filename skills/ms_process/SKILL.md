@@ -51,6 +51,21 @@ below.
 - The input file has no `DATABASE_SEQUENCE`/proteoform annotation at
   all yet -- that's `toprepo_pipeline`, not this skill; run it first
 
+## Before You Start
+
+**Plan first, then confirm.** Before running either tool, lay out the
+plan -- which one, against which input file, what ratio/group-field --
+and wait for the user to confirm it before executing. Whether you get a
+2-way or 3-way split depends on state on disk (see the Anti-Patterns
+table), so say which one you expect and why before running, not just
+after.
+
+**Report before touching a script.** Neither tool has external
+dependencies to install, but if a fix means editing something under
+`scripts/`, stop and tell the user exactly what's wrong and what you're
+about to change before doing it. Wait for their response before
+continuing.
+
 ## Tool 1: split_ms_file.py
 
 `scripts/split_ms_file.py`, run via `bash`. It auto-detects the block

@@ -60,6 +60,26 @@ and say so if you can't reach them either.
 - **Not this skill**: once you have `*_toppic_prsm_single.tsv` and the
   matching mzML/msalign/feature files, move on to `toprepo_pipeline`
 
+## Before You Start
+
+**Plan first, then confirm.** Before running anything below, lay out the
+plan for the task -- which of Prerequisites/Pipeline steps apply, in what
+order, against which files -- and wait for the user to confirm it before
+executing. This is a real build-and-run workflow with real failure modes
+(see Core Philosophy); catching a wrong assumption (wrong input file,
+wrong FASTA, wrong thread count) before anything runs is much cheaper
+than after.
+
+**Report before installing something new or touching a script.** The
+apt packages and build steps already listed under Prerequisites are the
+expected setup -- run those without asking. But if the build or a run
+hits something Prerequisites doesn't already cover (a missing/wrong-version
+system library, a compiler too old, anything needing an `apt install`
+beyond the documented list), or if fixing it would mean editing a file
+under `vendor/` (never do this silently -- see Core Philosophy), stop and
+tell the user exactly what went wrong and what you're about to do about
+it. Wait for their response before continuing.
+
 ## Prerequisites
 
 **0. toppic-suite's source is already here; build it.** Look for an
