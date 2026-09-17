@@ -26,7 +26,7 @@ description: |
 
 Verified directly: this skill was written against a real build of HEAD
 (reports itself as `Version: 1.9.0`), and `topfd --help`/`toppic --help`
-disagree with `<toppic_suite_dir>/doc/topfd_manual.md` and
+disagree with `skills/toppic_suite/vendor/doc/topfd_manual.md` and
 `toppic_manual.md` on real things -- default values that changed
 (`topfd`'s ECScore cutoff is documented as 0.5, the built binary's default
 is 0.1), flags whose meaning flipped (`-f` was opt-in
@@ -36,6 +36,12 @@ mention at all (`-R`/`--proteoform-type` on `toppic`, `-v`/`--env-cnn-cutoff`
 and `-l`/`--split-intensity-ratio` on `topfd`). Don't quote a flag's
 default or meaning from the manual without cross-checking `--help` from
 the binary you actually have.
+
+toppic-suite's source is vendored into `skills/toppic_suite/vendor/` (see
+Prerequisites) so building doesn't depend on GitHub being reachable --
+but it's still frozen at the commit in `vendor/VENDORED_COMMIT.txt`, not
+ours to modify; fix problems from this skill's own layer, not by
+hand-editing anything under `vendor/`.
 
 **msconvert is a different project** (ProteoWizard, not toppic-suite) and
 this skill's msconvert guidance below is **not verified the way TopFD/TopPIC
@@ -56,17 +62,19 @@ and say so if you can't reach them either.
 
 ## Prerequisites
 
-**0. Locate (or build) toppic-suite.** Look for an existing build/install
-first (`topfd`/`toppic` on `PATH`, or an existing clone). If neither
-exists, clone and build it -- verified end to end on Ubuntu (Clang 18,
-CMake 3.28, Boost 1.83 from apt all worked; the README also documents
-Redhat 9, macOS, and Windows):
+**0. toppic-suite's source is already here; build it.** Look for an
+existing build/install first (`topfd`/`toppic` on `PATH`, or a previous
+build under `skills/toppic_suite/vendor/build/`) -- rebuilding from
+scratch each time wastes real time on this codebase's size. Otherwise
+build the vendored source directly (no clone needed) -- verified end to
+end on Ubuntu (Clang 18, CMake 3.28, Boost 1.83 from apt all worked; the
+upstream README also documents Redhat 9, macOS, and Windows, see
+`vendor/UPSTREAM_README.md`):
 ```
-git clone https://github.com/toppic-suite/toppic-suite <toppic_suite_dir>
-cd <toppic_suite_dir>
+cd skills/toppic_suite/vendor
 apt install build-essential cmake clang libboost-all-dev libxerces-c-dev \
     libsqlite3-dev zlib1g-dev rapidjson-dev qtbase5-dev   # qtbase5-dev only needed for the GUI targets
-mkdir build && cd build
+mkdir -p build && cd build
 cmake ..
 make -j$(nproc) topfd toppic   # console tools only -- skips the slow Qt GUI build; add topmg/topindex/topdiff/topdia if needed
 make install                    # installs to /usr/local/bin, /usr/local/lib/toppic, /usr/share/toppic on Linux
@@ -74,8 +82,10 @@ echo /usr/local/lib/toppic > /etc/ld.so.conf.d/toppic.conf && ldconfig   # see "
 ```
 All of `ext/{pwiz,boost,onnx,htslib,rapidxml,xml2json,catch}` and the
 Linux ONNX Runtime `.so` (`lib/toppic/libonnxruntime.so`) are already
-vendored in the repo -- no submodule init or separate ONNX Runtime install
-needed on Linux.
+vendored -- no submodule init or separate ONNX Runtime install needed on
+Linux. `vendor/build/` and `vendor/bin/` are build output (gitignored),
+not part of what's vendored -- don't expect them to already exist on a
+fresh checkout.
 
 **`make install` on its own ships a binary that cannot run.** Verified:
 `readelf -d /usr/local/bin/topfd` (and `toppic`) shows **no RPATH/RUNPATH
@@ -100,7 +110,7 @@ try running from the build tree.
 directory next to the executable first, then fall back to
 `/usr/share/toppic` -- confirmed by reading `getResourceDir()` in
 `src/common/util/file_util.cpp` and by running `topfd --help` and a real
-deconvolution both before and after symlinking `<toppic_suite_dir>/resources`
+deconvolution both before and after symlinking `skills/toppic_suite/vendor/resources`
 next to the built binary. Without either, every run fails with `The
 resource directory ... does not exist!`. `make install` handles this for
 you; skip it only if you symlink or copy `resources/` next to wherever you
@@ -156,7 +166,7 @@ cd <ms_dir>
 topfd -u <threads> <input>.mzML
 ```
 Verified with a real run (the mzXML test fixture bundled at
-`<toppic_suite_dir>/tests/data/mzxml_test.mzXML`, 4 MS1 + 12 MS/MS scans,
+`skills/toppic_suite/vendor/tests/data/mzxml_test.mzXML`, 4 MS1 + 12 MS/MS scans,
 finished in ~4.5s): produces `<input>_ms1.msalign`, `<input>_ms2.msalign`,
 `<input>_ms1.feature`, `<input>_ms2.feature`, `<input>_feature.xml`, and an
 `<input>_html/` folder, all next to the input (no output-directory flag --
@@ -206,7 +216,7 @@ whenever the FASTA content changes, or use a new filename.
 | Pattern | Problem | Fix |
 |---|---|---|
 | Copying flag defaults/meanings from `doc/topfd_manual.md` or `doc/toppic_manual.md` | Verified stale against a real HEAD build (see Core Philosophy) -- wrong defaults and at least one flag whose default behavior flipped | Run `topfd --help`/`toppic --help` on the binary you actually built and read from that |
-| Running `topfd`/`toppic` straight from `build/../bin/` without `make install` or a `resources/` symlink | `getResourceDir()` looks next to the executable, then `/usr/share/toppic`; neither exists yet | `make install`, or symlink `<toppic_suite_dir>/resources` next to the binaries |
+| Running `topfd`/`toppic` straight from `build/../bin/` without `make install` or a `resources/` symlink | `getResourceDir()` looks next to the executable, then `/usr/share/toppic`; neither exists yet | `make install`, or symlink `skills/toppic_suite/vendor/resources` next to the binaries |
 | Trusting `make install` alone and moving on | Verified: `/usr/local/bin/topfd`/`toppic` have no RPATH (a real bug -- the project's rpath flag targets shared libraries, never applied to these executables), so they fail with `error while loading shared libraries: libonnxruntime.so.1.14.1 ...` (exit 127) even though the build-tree copy worked | Register `/usr/local/lib/toppic` with `ldconfig` (or set `LD_LIBRARY_PATH`) right after every `make install`, as shown in Prerequisites |
 | Editing/regenerating a FASTA in place and re-running `toppic` against it | Verified: the cached `<database>.fasta_idx/` isn't invalidated by a content change -- you silently search the old database | `rm -rf <database>.fasta_idx/` first, or search-and-replace to a new filename |
 | Building the full `make install` (all six tools + six GUIs) when only TopFD/TopPIC are needed | Qt GUI compilation is the slow part and buys nothing for a command-line skill | `make -j$(nproc) topfd toppic` (add other console tools by name only if asked) |
@@ -216,15 +226,20 @@ whenever the FASTA content changes, or use a new filename.
 
 ## Resources
 
-**Upstream (not vendored here)**:
-- `https://github.com/toppic-suite/toppic-suite` -- clone and build in place
-- `<toppic_suite_dir>/doc/topfd_manual.md`, `toppic_manual.md` -- useful
-  for output-file descriptions and worked examples, **not** for exact flag
+**Vendored** (`skills/toppic_suite/vendor/`, from
+`https://github.com/toppic-suite/toppic-suite` -- see
+`vendor/VENDORED_COMMIT.txt` for the exact commit; `resources/topmsv/node_modules/`
+was dropped when vendoring, it's upstream's own web-visualization frontend
+tooling, unused by the CLI path this skill covers):
+- `vendor/doc/topfd_manual.md`, `toppic_manual.md` -- useful for
+  output-file descriptions and worked examples, **not** for exact flag
   defaults (see Core Philosophy)
-- `<toppic_suite_dir>/tests/data/mzxml_test.mzXML`,
-  `mzxml_test_no_ms1.mzXML` -- real bundled fixtures, good for a quick
-  smoke test of a fresh build
-- ProteoWizard (`https://proteowizard.sourceforge.io`) -- msconvert itself
+- `vendor/tests/data/mzxml_test.mzXML`, `mzxml_test_no_ms1.mzXML` -- real
+  bundled fixtures, good for a quick smoke test of a fresh build
+
+**Not vendored** -- genuinely external:
+- ProteoWizard (`https://proteowizard.sourceforge.io`) -- msconvert itself,
+  a separate project (see Core Philosophy/Prerequisites)
 
 **Related skills**:
 - `toprepo_pipeline` -- the next step: turns this skill's mzML + msalign +

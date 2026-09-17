@@ -6,6 +6,12 @@ Train_result/
 Predict_result/
 TopRepo_Result/
 
+# Build output from compiling the vendored toppic-suite C++ source locally
+# -- machine-specific, not part of what's vendored. See README.md
+# "Vendored code".
+skills/toppic_suite/vendor/build/
+skills/toppic_suite/vendor/bin/
+
 # Python
 __pycache__/
 *.py[cod]
