@@ -33,10 +33,15 @@ ownership, and status across turns via create_task/update_task/
 claim_task/complete_task (s10). A bash call with run_in_background=true
 runs in a daemon thread instead of blocking the turn; its result is
 collected on a later turn as a <task_notification> (s11). schedule_cron
-registers a 5-field cron job that a scheduler thread enqueues when due;
-a queue-processor thread delivers it as a "[Scheduled] ..." turn once
-the agent is idle, with durable jobs surviving a restart via
-.scheduled_tasks.json (s12). spawn_teammate starts a persistent teammate
+registers a 5-field cron job that a scheduler thread checks once a
+second and enqueues when due (s12). A second daemon thread,
+autonomous_turn_loop, wakes on its own -- no user input needed -- and
+runs one agent_loop turn whenever there's a cron job due, mail waiting
+in Lead's mailbox, or a finished background task; agent_loop's own
+consume_cron_queue/consume_lead_inbox/inject_background_results calls
+drain whichever of those is why it woke up. Both threads share
+agent_lock with the interactive CLI loop so an autonomous and a typed
+turn never run at once. spawn_teammate starts a persistent teammate
 thread with its own claimed Task and message history; it exchanges
 messages, plan approvals, and shutdown requests with Lead through file
 mailboxes (.mailboxes/) and reports results back into this agent's own
@@ -3244,20 +3249,36 @@ def run_agent_turn_locked(user_query: str | None = None):
     print()
 
 
-def queue_processor_loop(stop_event: threading.Event = RUNTIME_STOP):
+def has_pending_background() -> bool:
+    with BACKGROUND._lock:
+        return bool(BACKGROUND._ready)
+
+
+def has_pending_wake_signal() -> bool:
+    """Whether an autonomous turn (no interactive user query) has anything
+    to do: a cron job is due, a teammate left mail for Lead, or a
+    background task finished and hasn't been surfaced yet. agent_loop's
+    own consume_cron_queue/consume_lead_inbox/inject_background_results
+    calls drain whichever of these is why the turn woke up -- this
+    function only decides whether it's worth starting one."""
+    return has_cron_queue() or BUS.peek("lead") or has_pending_background()
+
+
+def autonomous_turn_loop(stop_event: threading.Event = RUNTIME_STOP):
     while not stop_event.wait(0.2):
-        if not has_cron_queue() or not agent_lock.acquire(blocking=False):
+        if not has_pending_wake_signal() or not agent_lock.acquire(blocking=False):
             continue
         try:
-            if has_cron_queue():
+            if has_pending_wake_signal():
                 run_agent_turn_locked()
         finally:
             agent_lock.release()
 
 
 def start_runtime_threads():
-    """Start the daemon threads that poll cron and deliver due jobs. Only
-    the CLI entry point calls this; importing this module starts nothing."""
+    """Start the daemon threads that poll cron and deliver autonomous
+    turns (cron due, teammate mail, finished background work). Only the
+    CLI entry point calls this; importing this module starts nothing."""
     global runtime_started
     with runtime_lock:
         if runtime_started:
@@ -3266,7 +3287,7 @@ def start_runtime_threads():
         RUNTIME_STOP.clear()
         runtime_threads.extend([
             threading.Thread(target=cron_scheduler_loop, name="cron-scheduler", daemon=True),
-            threading.Thread(target=queue_processor_loop, name="cron-queue-processor", daemon=True),
+            threading.Thread(target=autonomous_turn_loop, name="autonomous-turn", daemon=True),
         ])
         for thread in runtime_threads:
             thread.start()
