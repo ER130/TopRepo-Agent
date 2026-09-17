@@ -2,16 +2,57 @@
 
 Two things in one repo:
 
-1. **`code.py`** -- a small, self-contained coding agent (skill loading,
-   context compaction, long-term memory, a task/dependency system, and a
-   few safety hooks), built by following a "learn Claude Code" style
-   course through its s07-s10 stages.
+1. **`code.py`** -- a self-contained coding agent (skill loading, context
+   compaction, long-term memory, a task/dependency system, background
+   work, cron scheduling, and persistent agent teams with task-bound Git
+   worktrees), built by following the
+   [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)
+   course through its s07-s13 stages. See [`code.py`](#codepy) below.
 2. **`skills/`** -- a set of [Agent Skills](https://code.claude.com/docs/en/skills)
    (`SKILL.md` + optional helper scripts) that `code.py` -- or Claude Code
    itself, since the format is the same -- can load on demand. Four of them
    chain together into a full top-down proteomics pipeline: raw MS
    instrument data in, a trained/queried spectral-prediction model out.
    Two more (`code-review`, `pdf`) are generic, unrelated examples.
+
+## `code.py`
+
+The agent itself, following [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)'s
+stages s07 through s13 (skipping s14's MCP plugin). Run it directly with
+`pip install anthropic python-dotenv pyyaml`, a `.env` with
+`ANTHROPIC_API_KEY` and `MODEL_ID` set, then `python3 code.py`.
+
+| Capability | What it adds | Key tools |
+|---|---|---|
+| Skills (s07) | loads `skills/*/SKILL.md` on demand instead of dumping all of them into the system prompt | `load_skill` |
+| Context compaction (s08) | keeps a long conversation under budget: persist large tool output → archive old history → shorten → summarize as a last resort | `compact` |
+| Memory (s09) | recalls relevant facts/preferences from `.memory/` at the start of each turn, extracts new ones once a turn ends | -- (automatic) |
+| Tasks (s10) | dependency-aware task graph in `.tasks/`, file-locked so concurrent claimants never race | `create_task`, `update_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task` |
+| Background work (s11) | a long `bash` call runs in a thread instead of blocking the turn; its result arrives as a notification on a later turn | `bash(run_in_background=true)` |
+| Cron (s12) | schedules a prompt on a 5-field cron expression, delivered once the agent is idle; durable jobs survive a restart | `schedule_cron`, `list_crons`, `cancel_cron` |
+| Agent teams (s13) | spawns a persistent teammate on its own thread with an independent message history and working directory, coordinated with Lead through a plan-approval/shutdown protocol | `spawn_teammate`, `list_teammates`, `send_message`, `request_shutdown`, `request_plan`, `review_plan` |
+| Worktrees (s13) | binds a Task to a real `git worktree` so that Task's file/bash tools -- a teammate's, or Lead's own once it claims that Task -- run isolated from the main working directory | `create_worktree` |
+
+An interactive turn, a scheduled cron turn, and an autonomous turn (woken
+by a teammate's message or a finished background task, with nobody
+typing) all share one `agent_lock`, so two never run at once.
+`remove_worktree` exists but is deliberately not a model tool -- removing
+a worktree is destructive Git surgery, meant for a human operator to run
+directly, not something the model can call on itself. MCP
+(learn-claude-code's s14) isn't included.
+
+Runtime state `code.py` creates while running -- none of it is code, all
+of it is gitignored:
+
+| Path | What's in it |
+|---|---|
+| `.tasks/` | one JSON file per task |
+| `.memory/` | durable facts/preferences the agent chose to remember, plus `MEMORY.md`'s catalog |
+| `.transcripts/` | full conversation snapshots saved before compaction trims anything |
+| `.task_outputs/` | large tool output saved to disk instead of kept in context |
+| `.scheduled_tasks.json` | durable (`durable=true`) cron jobs, so they survive a restart |
+| `.mailboxes/` | one JSONL file per agent (`lead`, or a teammate's name); a message is deleted once read |
+| `.worktrees/` | task-bound Git worktree checkouts, each on its own `wt/<name>` branch |
 
 ## The pipeline
 
