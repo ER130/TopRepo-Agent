@@ -48,8 +48,8 @@ pull in the model-training playbook, and vice versa.
 
 | Skill | Wraps | Reads | Writes |
 |---|---|---|---|
-| [`toppic_suite`](skills/toppic_suite/SKILL.md) | msconvert (external), [TopFD/TopPIC](https://github.com/toppic-suite/toppic-suite) (built from source) | raw file or mzML/mzXML, a FASTA database | mzML, `.msalign`, `.feature`, PrSM identification TSVs -- all written beside the input |
-| [`toprepo_pipeline`](skills/toprepo_pipeline/SKILL.md) | [TopRepo](https://github.com/toppic-suite/toprepo) (cloned, not vendored) | `toppic_suite`'s output | a merged info TSV, then the `DATABASE_SEQUENCE`-annotated `.msalign` that everything downstream needs |
+| [`toppic_suite`](skills/toppic_suite/SKILL.md) | msconvert (external), [TopFD/TopPIC](https://github.com/toppic-suite/toppic-suite) (source vendored in `skills/toppic_suite/vendor/`, built locally) | raw file or mzML/mzXML, a FASTA database | mzML, `.msalign`, `.feature`, PrSM identification TSVs -- all written beside the input |
+| [`toprepo_pipeline`](skills/toprepo_pipeline/SKILL.md) | [TopRepo](https://github.com/toppic-suite/toprepo) (source vendored in `skills/toprepo_pipeline/vendor/`) | `toppic_suite`'s output | a merged info TSV, then the `DATABASE_SEQUENCE`-annotated `.msalign` that everything downstream needs |
 | [`ms_process`](skills/ms_process/SKILL.md) | two small original scripts (`skills/ms_process/scripts/`) | `toprepo_pipeline`'s annotated `.msalign` | group-aware train/val(/test) `.msalign` splits, a scan-metadata TSV |
 | [`pdpred_pipeline`](skills/pdpred_pipeline/SKILL.md) | the user's own TD-Pred model code (`skills/pdpred_pipeline/script/`) | `ms_process`'s splits/TSV | HDF5 tensors, a trained checkpoint, predicted spectra |
 | [`code-review`](skills/code-review/SKILL.md) | -- | any diff/codebase | a review write-up (no files) |
@@ -88,18 +88,34 @@ not just as a label. `<name>` is a looser, human-friendly tag (often the
 species or project name) used to name output folders and files
 consistently across skills.
 
-## Upstream tools (not vendored)
+## Vendored code
 
-- [TopFD/TopPIC/toppic-suite](https://github.com/toppic-suite/toppic-suite) --
-  Tulane University / toppic-suite, built from source, see `toppic_suite/SKILL.md`
-- [TopRepo](https://github.com/toppic-suite/toprepo) -- same team, cloned in
-  place, see `toprepo_pipeline/SKILL.md`
-- [ProteoWizard](https://proteowizard.sourceforge.io) (msconvert) -- separate
-  project entirely
+Unlike a typical "clone this from GitHub at runtime" skill, the actual
+upstream source this project depends on lives in the repo, the same way
+`pdpred_pipeline/script/` already vendors the user's own TD-Pred code --
+so running the pipeline doesn't depend on GitHub being reachable at the
+moment you need it:
 
-These are cloned/built wherever you're running the pipeline, not copied
-into this repo -- keeps this project from duplicating (and drifting from)
-code it doesn't own. The only exceptions are `pdpred_pipeline/script/`
-(the user's own TD-Pred model code) and a handful of small original
-fix/bookkeeping scripts under `toprepo_pipeline/scripts/`, both called out
-as such in their own `SKILL.md`.
+| Directory | From | Commit | Size |
+|---|---|---|---|
+| `skills/toppic_suite/vendor/` | [toppic-suite](https://github.com/toppic-suite/toppic-suite) (Tulane / toppic-suite) | see `vendor/VENDORED_COMMIT.txt` | ~163 MB (dominated by one 87 MB ONNX scoring model TopFD needs at runtime; upstream's own `resources/topmsv/node_modules/` was dropped, unused by the CLI path this project uses) |
+| `skills/toprepo_pipeline/vendor/` | [TopRepo](https://github.com/toppic-suite/toprepo) (same team) | see `vendor/VENDORED_COMMIT.txt` | ~19 MB |
+
+It's still their code, not ours -- each `SKILL.md`'s Core Philosophy says
+so explicitly: fix problems from this project's own layer (`scripts/`,
+never by hand-editing anything under a `vendor/` directory), and re-vendor
+(copy over, update `VENDORED_COMMIT.txt`) rather than patch in place when
+upstream changes something. `skills/toppic_suite/vendor/build/` and
+`vendor/bin/` are build output from compiling the vendored C++ source
+locally, not part of what's vendored -- gitignored, regenerated per
+machine.
+
+**Genuinely external** (not vendored, no local copy exists):
+[ProteoWizard](https://proteowizard.sourceforge.io) (msconvert) -- a
+separate project; see `toppic_suite/SKILL.md`'s Core Philosophy for why
+its guidance there is less trustworthy than everything else in this repo.
+
+The only other non-vendored, non-generic code is a handful of small
+original fix/bookkeeping scripts under `toprepo_pipeline/scripts/`
+(`skills/ms_process/scripts/` is fully original too) -- called out as such
+in their own `SKILL.md`, alongside the vendored code they sit next to.
