@@ -33,6 +33,23 @@ been -- no `DATABASE_SEQUENCE` on the spectra yet -- that's the
 - The user wants to prepare/convert MS data specifically for this pipeline
   (as opposed to a generic split/convert -- that's the `ms_process` skill)
 
+## Before You Start
+
+**Plan first, then confirm.** Before running anything below, lay out the
+plan -- which step(s), against which files, which `--target` and
+`--max_length`, whether this is a from-scratch train or a fine-tune -- and
+wait for the user to confirm it before executing. A wrong `--target` in
+particular only shows up as a shape mismatch much later (see Anti-Patterns);
+catching it in the plan is a lot cheaper than after a training run.
+
+**Report before installing something new or touching a script.** The
+`torch`/`torchinfo`/`h5py`/`numpy` this pipeline needs are assumed already
+installed, since this is the user's own TD-Pred code. If a run turns up a
+missing or wrong-version package, or if fixing something means editing a
+file under `script/`, stop and tell the user exactly what went wrong and
+what you're about to do about it. Wait for their response before
+continuing.
+
 ## Pipeline
 
 Give training and prediction runs their own folders, referred to below as
