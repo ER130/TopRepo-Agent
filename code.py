@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-code.py - Skill Loading + Context Compact + Memory + Task System
+code.py - Skill Loading + Context Compact + Memory + Task + Background
 
 Merges learn-claude-code s07 (skill loading), s08 (context compaction),
-s09 (memory), and s10 (task system) on top of the original s07 agent.
+s09 (memory), s10 (task system), and s11 (background tasks) on top of
+the original s07 agent.
 
 The system prompt contains a catalog of skill names and descriptions.
 The model loads the full SKILL.md only when it calls load_skill.
@@ -27,15 +28,21 @@ older results -> summarize as a last resort (s08). Memory (.memory/)
 recalls relevant records at the start of a turn and extracts durable
 facts once the turn ends (s09). Tasks (.tasks/) persist dependencies,
 ownership, and status across turns via create_task/update_task/
-claim_task/complete_task (s10).
+claim_task/complete_task (s10). A bash call with run_in_background=true
+runs in a daemon thread instead of blocking the turn; its result is
+collected on a later turn as a <task_notification> (s11).
 """
 
+import atexit
 import glob
 import json
 import os
 import re
 import secrets
+import signal
 import subprocess
+import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -869,16 +876,70 @@ def complete_task(task_id: str, owner: str = "agent") -> str:
 
 # -- Tools --
 
-def run_bash(command: str) -> str:
+_shell_processes: set[subprocess.Popen] = set()
+_shell_process_lock = threading.RLock()
+
+
+def _stop_process_group(process: subprocess.Popen):
+    """Stop processes that remain in the command's original process group."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, sig)
+        except (ProcessLookupError, OSError):
+            return
+        time.sleep(0.05)
+
+
+def _stop_all_shell_processes():
+    with _shell_process_lock:
+        processes = list(_shell_processes)
+    for process in processes:
+        _stop_process_group(process)
+
+
+def _handle_termination_signal(signum, _frame):
+    _stop_all_shell_processes()
+    raise SystemExit(128 + signum)
+
+
+atexit.register(_stop_all_shell_processes)
+signal.signal(signal.SIGTERM, _handle_termination_signal)
+
+
+def _run_bash_process(command: str) -> tuple[str, int | None]:
+    """Run a command in its own process group so it can be tracked and killed
+    independently of the shell that spawned it (needed once bash calls can
+    run unattended in a background thread)."""
+    process = None
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command, shell=True, cwd=WORKDIR,
-            capture_output=True, text=True, errors="replace", timeout=120,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace", start_new_session=True,
         )
-        output = (result.stdout + result.stderr).strip()
-        return output[:50000] if output else "(no output)"
+        with _shell_process_lock:
+            _shell_processes.add(process)
+        stdout, stderr = process.communicate(timeout=120)
+        output = (stdout + stderr).strip()
+        return (output[:50000] if output else "(no output)"), process.returncode
     except subprocess.TimeoutExpired:
-        return "Error: Timeout (120s)"
+        return "Error: Timeout (120s)", None
+    except OSError as e:
+        return f"Error: {type(e).__name__}: {e}", None
+    finally:
+        if process is not None:
+            _stop_process_group(process)
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            with _shell_process_lock:
+                _shell_processes.discard(process)
+
+
+def run_bash(command: str, run_in_background: bool = False) -> str:
+    output, _exit_code = _run_bash_process(command)
+    return output
 
 
 def run_read(path: str, limit: int | None = None) -> str:
@@ -976,9 +1037,120 @@ def run_complete_task(task_id: str) -> str:
     return complete_task(task_id, owner="agent")
 
 
+# -- Background tasks --
+
+class BackgroundManager:
+    def __init__(self):
+        self.tasks: dict[str, dict] = {}
+        self.results: dict[str, str] = {}
+        self._ready: list[str] = []
+        self._counter = 0
+        self._lock = threading.Lock()
+
+    def start(self, block) -> str:
+        if block.name != "bash":
+            raise ValueError("Only bash commands can run in the background")
+        command = block.input.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("Bash command cannot be empty")
+
+        with self._lock:
+            self._counter += 1
+            task_id = f"bg_{self._counter:04d}"
+            self.tasks[task_id] = {
+                "tool_use_id": block.id,
+                "command": command,
+                "status": "running",
+            }
+
+        thread = threading.Thread(target=self._run, args=(task_id, command), daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                self.tasks.pop(task_id, None)
+            raise
+        print(f"  [background] started {task_id}: {command[:60]}")
+        return task_id
+
+    def _run(self, task_id: str, command: str):
+        try:
+            output, exit_code = _run_bash_process(command)
+            status = "completed" if exit_code == 0 else "failed"
+        except Exception as e:
+            output = f"Error: {type(e).__name__}: {e}"
+            status = "failed"
+
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None:
+                return
+            task["status"] = status
+            self.results[task_id] = output
+            self._ready.append(task_id)
+
+    def collect(self) -> list[str]:
+        with self._lock:
+            ready = []
+            for task_id in self._ready:
+                task = self.tasks.pop(task_id, None)
+                result = self.results.pop(task_id, "")
+                if task is not None:
+                    ready.append((task_id, task, result))
+            self._ready.clear()
+
+        notifications = []
+        for task_id, task, result in ready:
+            notifications.append(
+                f"<task_notification>\n"
+                f"  <task_id>{task_id}</task_id>\n"
+                f"  <status>{task['status']}</status>\n"
+                f"  <command>{task['command']}</command>\n"
+                f"  <summary>{result[:500]}</summary>\n"
+                f"</task_notification>"
+            )
+            print(f"  [background] collected {task_id}: {task['status']}")
+        return notifications
+
+
+BACKGROUND = BackgroundManager()
+
+
+def should_run_background(tool_name: str, tool_input: dict) -> bool:
+    return tool_name == "bash" and tool_input.get("run_in_background") is True
+
+
+def start_background_task(block) -> str:
+    return BACKGROUND.start(block)
+
+
+def collect_background_results() -> list[str]:
+    return BACKGROUND.collect()
+
+
+def inject_background_results(messages: list) -> int:
+    """Fold completed background notifications into the next model turn."""
+    notifications = collect_background_results()
+    if not notifications:
+        return 0
+
+    blocks = [{"type": "text", "text": item} for item in notifications]
+    if messages and messages[-1].get("role") == "user":
+        content = messages[-1].get("content", "")
+        if isinstance(content, list):
+            content.extend(blocks)
+        else:
+            messages[-1]["content"] = [{"type": "text", "text": str(content)}, *blocks]
+    else:
+        messages.append({"role": "user", "content": blocks})
+    return len(notifications)
+
+
 BASE_TOOLS = [
-    {"name": "bash", "description": "Run a shell command.",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+    {"name": "bash", "description": "Run a shell command. Set run_in_background "
+     "to true for a long, independent command; it runs in the background and "
+     "its result is collected on a later turn instead of blocking this one.",
+     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}, "run_in_background": {"type": "boolean"}}, "required": ["command"]}},
     {"name": "read_file", "description": "Read file contents.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
     {"name": "write_file", "description": "Write content to a file.",
@@ -1135,11 +1307,19 @@ def execute_tool(block) -> str:
     if blocked:
         return str(blocked)
 
-    handler = TOOL_HANDLERS.get(block.name)
-    try:
-        output = handler(**block.input) if handler else f"Unknown: {block.name}"
-    except Exception as e:
-        output = f"Error: {e}"
+    if should_run_background(block.name, block.input):
+        try:
+            task_id = start_background_task(block)
+            output = (f"[Background task {task_id} started] "
+                      "The result will be collected on a later turn.")
+        except Exception as e:
+            output = f"Error: {e}"
+    else:
+        handler = TOOL_HANDLERS.get(block.name)
+        try:
+            output = handler(**block.input) if handler else f"Unknown: {block.name}"
+        except Exception as e:
+            output = f"Error: {e}"
 
     trigger_hooks("PostToolUse", block, output)
     return str(output)
@@ -1435,6 +1615,7 @@ def agent_loop(messages: list, active_request: str):
     reactive_retries = 0
 
     while True:
+        inject_background_results(messages)
         messages[:] = COMPACTOR.prepare(messages, active_request)
         try:
             response = client.messages.create(
