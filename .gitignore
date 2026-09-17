@@ -14,13 +14,15 @@ skills/toppic_suite/vendor/bin/
 
 # code.py runtime state -- created while the agent runs, session-local,
 # not part of its source (tasks, memory, transcripts, persisted tool
-# output, durable cron jobs, and teammate mailboxes).
+# output, durable cron jobs, teammate mailboxes, and task-bound Git
+# worktree checkouts).
 .tasks/
 .memory/
 .transcripts/
 .task_outputs/
 .scheduled_tasks.json
 .mailboxes/
+.worktrees/
 
 # Python
 __pycache__/
