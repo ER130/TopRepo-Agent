@@ -1,6 +1,6 @@
 # TopRepo-Agent
 
-Two things in one repo:
+Two components here
 
 1. **`code.py`** -- a self-contained coding agent (skill loading, context
    compaction, long-term memory, a task/dependency system, background
