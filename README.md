@@ -92,7 +92,7 @@ pull in the model-training playbook, and vice versa.
 | [`toppic_suite`](skills/toppic_suite/SKILL.md) | msconvert (external), [TopFD/TopPIC](https://github.com/toppic-suite/toppic-suite) (source vendored in `skills/toppic_suite/vendor/`, built locally) | raw file or mzML/mzXML, a FASTA database | mzML, `.msalign`, `.feature`, PrSM identification TSVs -- all written beside the input |
 | [`toprepo_pipeline`](skills/toprepo_pipeline/SKILL.md) | [TopRepo](https://github.com/toppic-suite/toprepo) (source vendored in `skills/toprepo_pipeline/vendor/`) | `toppic_suite`'s output | a merged info TSV, then the `DATABASE_SEQUENCE`-annotated `.msalign` that everything downstream needs |
 | [`ms_process`](skills/ms_process/SKILL.md) | two small original scripts (`skills/ms_process/scripts/`) | `toprepo_pipeline`'s annotated `.msalign` | group-aware train/val(/test) `.msalign` splits, a scan-metadata TSV |
-| [`pdpred_pipeline`](skills/pdpred_pipeline/SKILL.md) | the user's own TD-Pred model code (`skills/pdpred_pipeline/script/`) | `ms_process`'s splits/TSV | HDF5 tensors, a trained checkpoint, predicted spectra |
+| [`pdpred_pipeline`](skills/pdpred_pipeline/SKILL.md) | the user's own TD-Pred model code (`skills/pdpred_pipeline/scripts/`) | `ms_process`'s splits/TSV | HDF5 tensors, a trained checkpoint, predicted spectra |
 | [`code-review`](skills/code-review/SKILL.md) | -- | any diff/codebase | a review write-up (no files) |
 | [`pdf`](skills/pdf/SKILL.md) | pdftotext / PyMuPDF / ReportLab | a PDF | extracted text, merged/split/created PDFs |
 
@@ -133,7 +133,7 @@ consistently across skills.
 
 Unlike a typical "clone this from GitHub at runtime" skill, the actual
 upstream source this project depends on lives in the repo, the same way
-`pdpred_pipeline/script/` already vendors the user's own TD-Pred code --
+`pdpred_pipeline/scripts/` already vendors the user's own TD-Pred code --
 so running the pipeline doesn't depend on GitHub being reachable at the
 moment you need it:
 
