@@ -19,7 +19,7 @@ description: |
 Every step below calls the user's own already-tested TD-Pred code as a
 subprocess via `bash`. This skill includes the right order to run things in, which flags
 matter, and where the sharp edges are. All scripts live
-in `script/`.
+in `scripts/`.
 
 The input MS file should has already been processed(by TopRepo) and
 is annotated per spectrum: `BEGIN IONS ... END IONS` blocks. If it hasn't
@@ -46,7 +46,7 @@ catching it in the plan is a lot cheaper than after a training run.
 `torch`/`torchinfo`/`h5py`/`numpy` this pipeline needs are assumed already
 installed, since this is the user's own TD-Pred code. If a run turns up a
 missing or wrong-version package, or if fixing something means editing a
-file under `script/`, stop and tell the user exactly what went wrong and
+file under `scripts/`, stop and tell the user exactly what went wrong and
 what you're about to do about it. Wait for their response before
 continuing.
 
@@ -70,12 +70,12 @@ re-deriving it.
 ### 1. Convert each split to HDF5
 
 ```
-python skills/pdpred_pipeline/script/msalign_anno_to_hdf5.py \
+python skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
     --msalign <split_out_dir>/<name>_train.msalign \
     --out <split_out_dir>/train.h5 \
     --max_length 200
 
-python skills/pdpred_pipeline/script/msalign_anno_to_hdf5.py \
+python skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
     --msalign <split_out_dir>/<name>_val.msalign \
     --out <split_out_dir>/val.h5 \
     --max_length 200
@@ -99,7 +99,7 @@ a new species/dataset.
 ```
 mkdir -p <train_dir>
 
-python skills/pdpred_pipeline/script/train_td_pred.py \
+python skills/pdpred_pipeline/scripts/train_td_pred.py \
     --train <split_out_dir>/train.h5 \
     --validate <split_out_dir>/val.h5 \
     --out <train_dir>/checkpoint.pth \
@@ -137,7 +137,7 @@ python skills/pdpred_pipeline/script/train_td_pred.py \
   `--target charge` it'll say "expected (4, 199)" next to an actual
   shape of `(4, 11940)`. That's a cosmetic bug in the script, not a
   real mismatch -- ignore it.
-- Multi-GPU: `torchrun --nproc_per_node=N skills/pdpred_pipeline/script/train_td_pred.py ...`
+- Multi-GPU: `torchrun --nproc_per_node=N skills/pdpred_pipeline/scripts/train_td_pred.py ...`
   instead of `python ...`, same `--out`/`tee` pattern as above.
 
 ### 3. Predict
@@ -155,7 +155,7 @@ python skills/ms_process/scripts/convert_msalign_to_tsv.py \
 # b) predict spectra for every row in that TSV using a trained checkpoint
 mkdir -p <predict_dir>
 
-python skills/pdpred_pipeline/script/td_pred.py \
+python skills/pdpred_pipeline/scripts/td_pred.py \
     --input <val_dir>/<name>_scans.tsv \
     --model <train_dir>/checkpoint.pth_final \
     --output <predict_dir>/<name>_predictions.msalign \
@@ -175,14 +175,14 @@ above.
 | Training without `--target charge` when the checkpoint is meant for prediction | `td_pred.py` hardcodes `output_dim=60`, i.e. assumes a `charge`-target checkpoint; the default `pep_bond` (or `b_y`) checkpoint's shape won't match, and nothing warns you until you try to predict | Confirm the intended `--target` before running step 2; if a checkpoint wasn't trained with `charge` and someone wants to run step 3b with it, say so rather than running -- don't write a workaround script without flagging it first |
 | Assuming "just evaluate this checkpoint on this val set" has a dedicated script | It doesn't -- validation is built into `train_td_pred.py`'s training loop, there's no standalone eval mode | Say so rather than guessing; offer to write a thin eval-only script (reusing the validation-phase logic already in `train_td_pred.py`) if the user wants one |
 | Assuming "run the pipeline" means all 3 steps | The user may only want one step (e.g. just predict with an existing checkpoint) | Confirm which step(s) before running anything |
-| Copying scripts elsewhere, or `cd`-ing into a different directory first | All scripts use flat sibling imports (e.g. `import model_data as md`) that rely on Python adding the invoked script's own directory to `sys.path` | Always invoke by full path under `skills/pdpred_pipeline/script/` |
+| Copying scripts elsewhere, or `cd`-ing into a different directory first | All scripts use flat sibling imports (e.g. `import model_data as md`) that rely on Python adding the invoked script's own directory to `sys.path` | Always invoke by full path under `skills/pdpred_pipeline/scripts/` |
 | Launching a full training run without warning the user | Can take hours; blocks the loop if run in the foreground | Confirm epoch count/expected runtime first, run in the background |
 | Running step 1 on a new species/dataset without checking sequence lengths | `encode_spectrum`/`spectrum_anno` raise `IndexError` and abort partway through the file if any `DATABASE_SEQUENCE` is longer than `--max_length` -- you lose the whole run, not just that one spectrum | Check the input's longest `DATABASE_SEQUENCE` against `--max_length` before running, or raise `--max_length` to cover it |
 | Writing a checkpoint/log/prediction straight to the project root or scattering runs across ad-hoc paths | Runs from different datasets/species pile up ungrouped -- hard to find or compare later | Resolve `<train_dir>`/`<predict_dir>` once per run (see Pipeline above), `mkdir -p` it first, and point `--out`/`--output` and the log `tee` at it |
 
 ## Resources
 
-**Implementation** (all under `script/`):
+**Implementation** (all under `scripts/`):
 - `msalign_anno_to_hdf5.py` + `msalign_anno_generator.py` -- msalign to
   HDF5 (step 1). Only `MsalignAnnoBatchGenerator.__init__` and
   `.convert_anno_msalign_to_hdf5()` are used/working -- its
