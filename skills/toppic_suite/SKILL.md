@@ -82,10 +82,34 @@ it. Wait for their response before continuing.
 
 ## Prerequisites
 
-**0. toppic-suite's source is already here; build it.** Look for an
-existing build/install first (`topfd`/`toppic` on `PATH`, or a previous
-build under `skills/toppic_suite/vendor/build/`) -- rebuilding from
-scratch each time wastes real time on this codebase's size. Otherwise
+**topfd and toppic are already built and installed on this user's machine
+-- there's nothing to compile.** Confirmed working at `/usr/local/bin/topfd`
+and `/usr/local/bin/toppic` (both print clean `--help` output and
+`Version: 1.9.0.0`, no missing-shared-library errors), verified 2026-09-22
+from a fresh build of upstream HEAD. Skip straight to Pipeline steps 2/3
+below -- just call `topfd`/`toppic` directly.
+
+One cheap check before relying on that, since it's only true on this
+user's own machine -- a brand new environment (e.g. a fresh cloud sandbox
+checkout of this repo) won't have them installed:
+```
+topfd --help && toppic --help
+```
+Both should print help text and a `Version:` line. If either fails
+(`command not found`, or `error while loading shared libraries`), stop and
+tell the user rather than trying to fix it silently -- then see "Building
+from source" below only if they ask for it.
+
+**Memory**: TopFD/TopPIC's own docs say "at least 16 GB memory" for real
+datasets. This is a real constraint on large LC-MS runs, not boilerplate --
+if the machine has less, say so before launching a big job rather than
+letting it OOM partway through.
+
+### Building from source (fallback only -- not needed on this user's machine)
+
+Look for an existing build/install first (`topfd`/`toppic` on `PATH`, or a
+previous build under `skills/toppic_suite/vendor/build/`) -- rebuilding
+from scratch each time wastes real time on this codebase's size. Otherwise
 build the vendored source directly (no clone needed) -- verified end to
 end on Ubuntu (Clang 18, CMake 3.28, Boost 1.83 from apt all worked; the
 upstream README also documents Redhat 9, macOS, and Windows, see
@@ -135,11 +159,6 @@ next to the built binary. Without either, every run fails with `The
 resource directory ... does not exist!`. `make install` handles this for
 you; skip it only if you symlink or copy `resources/` next to wherever you
 run `topfd`/`toppic` from.
-
-**Memory**: TopFD/TopPIC's own docs say "at least 16 GB memory" for real
-datasets. This is a real constraint on large LC-MS runs, not boilerplate --
-if the machine has less, say so before launching a big job rather than
-letting it OOM partway through.
 
 **msconvert (unverified this session -- see Core Philosophy)**: raw
 vendor files (Thermo `.raw`, Bruker `.d`, etc.) need MSConvertGUI/msconvert
