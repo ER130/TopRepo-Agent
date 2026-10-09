@@ -259,8 +259,16 @@ PowerShell, use the `D:\...` form instead.
 
 ```
 docker run --rm -v <absolute path to ms_dir>:/data toppicsuite/toppic \
-    topfd -u <threads> /data/<input>.mzML
+    topfd -u <threads> /data/<input>.mzML > topfd_<input>.log 2>&1 &
 ```
+**Launch in the background, as shown above, not in the foreground.** On a
+real mzML file this routinely runs past a single foreground command's
+timeout (observed: multiple fresh sessions each hit a ~120s timeout running
+this in the foreground first, before separately discovering the background
+form) -- redirect output to a log file, background it with `&`, and poll
+that log (`tail`) or `wait` on the PID rather than blocking on the command
+itself.
+
 The underlying command and flags are the same binary this skill already
 verified end to end against a source build (the mzXML test fixture
 bundled at `skills/toppic_suite/vendor/tests/data/mzxml_test.mzXML`,
@@ -288,8 +296,18 @@ put it in `<ms_dir>` too (or mount a second `-v` for it) so both paths
 resolve inside the container:
 ```
 docker run --rm -v <absolute path to ms_dir>:/data toppicsuite/toppic \
-    toppic -u <threads> -f C57 /data/<database>.fasta /data/<input>_ms2.msalign
+    toppic -u <threads> -f C57 /data/<database>.fasta /data/<input>_ms2.msalign \
+    > toppic_<input>.log 2>&1 &
 ```
+**Launch in the background, as shown above, not in the foreground** -- same
+reason as TopFD: TopPIC on a real msalign file routinely runs past a single
+foreground command's timeout. Redirect to a log file, background it, poll
+or `wait`, as with TopFD above. Also **confirm `<database>.fasta` has
+actually finished writing** before this runs if TopFD just produced the
+msalign/feature pair in the background -- don't launch TopPIC until the
+TopFD background job has actually exited (check `docker ps`/the PID, not
+just that some output file exists).
+
 **Argument order: the FASTA always comes first, the msalign file second --
 `toppic [options] database-file-name spectrum-file-name`, confirmed from
 `toppic --help`'s own usage line. Reversing these has already happened once
@@ -325,6 +343,7 @@ whenever the FASTA content changes, or use a new filename.
 | Pattern | Problem | Fix |
 |---|---|---|
 | Copying flag defaults/meanings from `doc/topfd_manual.md` or `doc/toppic_manual.md` | Verified stale against a real HEAD build (see Core Philosophy) -- wrong defaults and at least one flag whose default behavior flipped | Run `topfd --help`/`toppic --help` on the binary you actually built and read from that |
+| Running `topfd`/`toppic` in the foreground on a real (not test-fixture) file | Observed repeatedly, across multiple fresh sessions: a foreground `docker run` hits a ~120s command timeout before the tool finishes, forcing a second attempt | Launch in the background with output redirected to a log file from the start (see steps 2 and 3 above), not as a recovery after the first one times out |
 | Running `topfd`/`toppic` straight from `build/../bin/` without `make install` or a `resources/` symlink | `getResourceDir()` looks next to the executable, then `/usr/share/toppic`; neither exists yet | `make install`, or symlink `skills/toppic_suite/vendor/resources` next to the binaries |
 | Trusting `make install` alone and moving on | Verified: `/usr/local/bin/topfd`/`toppic` have no RPATH (a real bug -- the project's rpath flag targets shared libraries, never applied to these executables), so they fail with `error while loading shared libraries: libonnxruntime.so.1.14.1 ...` (exit 127) even though the build-tree copy worked | Register `/usr/local/lib/toppic` with `ldconfig` (or set `LD_LIBRARY_PATH`) right after every `make install`, as shown in Prerequisites |
 | Editing/regenerating a FASTA in place and re-running `toppic` against it | Verified: the cached `<database>.fasta_idx/` isn't invalidated by a content change -- you silently search the old database | `rm -rf <database>.fasta_idx/` first, or search-and-replace to a new filename |
