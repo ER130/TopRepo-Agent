@@ -290,6 +290,12 @@ resolve inside the container:
 docker run --rm -v <absolute path to ms_dir>:/data toppicsuite/toppic \
     toppic -u <threads> -f C57 /data/<database>.fasta /data/<input>_ms2.msalign
 ```
+**Argument order: the FASTA always comes first, the msalign file second --
+`toppic [options] database-file-name spectrum-file-name`, confirmed from
+`toppic --help`'s own usage line. Reversing these has already happened once
+on this project; re-check the order above (or `toppic --help`) each time
+you write this command rather than reconstructing it from memory.**
+
 Verified (against a source build; see the staleness note) end to end: TopPIC
 auto-detects and uses the matching `<input>_ms2.feature` from the same
 directory (no need to name it -- it's derived from the msalign filename;
@@ -329,6 +335,7 @@ whenever the FASTA content changes, or use a new filename.
 | Passing a relative path to `docker run -v` | Docker requires an absolute host path for a bind mount; a relative one fails or silently mounts the wrong thing rather than erroring clearly | Resolve `<ms_dir>` to an absolute path first (`$(pwd)/<ms_dir>`, or the native `D:\...` form on Windows PowerShell) |
 | Compiling from source the moment `docker info` fails | Docker not being installed yet isn't a reason to fall back to the much more fragile source build -- see Prerequisites/Before You Start | Send the user to install Docker for their OS, wait for confirmation, re-check `docker info` |
 | Trusting the Docker image's TopFD/TopPIC version matches this skill's `--help`-verified flag defaults | The image hasn't been updated in 5+ years; see the staleness note under Prerequisites | Run `--help` inside the container if a flag's behavior seems off, same as the Core Philosophy rule for a source build |
+| Passing the msalign file before the FASTA to `toppic` (`toppic ... <input>_ms2.msalign <database>.fasta`) | The real usage is `toppic [options] database-file-name spectrum-file-name` -- FASTA must be first. This has already happened once on this project, in a session where the command was reconstructed from memory/context rather than read fresh from this file -- TopPIC then either errors immediately or silently tries to parse the wrong file as the database | Before running, check the argument order against step 3's example above (or a fresh `toppic --help`) -- don't trust a remembered or previously-typed version of this command |
 
 ## Resources
 
