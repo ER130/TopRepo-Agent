@@ -71,6 +71,17 @@ executing. This is a real build-and-run workflow with real failure modes
 wrong FASTA, wrong thread count) before anything runs is much cheaper
 than after.
 
+**List actual parameter values, not just step names.** For TopFD, state
+the flags you intend to use -- at minimum `-u` (threads, default 1) and
+whether `-a`/`-o`/`-g` apply (see step 2's Useful flags). For TopPIC,
+state `-f` (fixed modification -- this one has no default, it must be
+chosen explicitly: C57, C58, or neither), `-u`, and whether `-d`/`-x`/
+`-b`/`-B` apply (see step 3). Mark which values are this skill's own
+defaults and which you're choosing for this run, then ask explicitly
+whether the user is satisfied with them or wants to change any before you
+execute. If they ask for a change, confirm the new value back before
+using it.
+
 **Report before installing something new or touching a script.** The
 apt packages and build steps already listed under Prerequisites are the
 expected setup -- run those without asking. But if the build or a run

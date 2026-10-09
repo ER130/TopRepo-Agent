@@ -80,6 +80,14 @@ file, which annotation script) before any command runs is much cheaper
 than after, especially given how many steps here fail silently rather
 than loudly (see Core Philosophy).
 
+**State `<dataset_id>` and which resource files explicitly, and ask.**
+`<dataset_id>` has no default -- say exactly what you're choosing to use
+(see Pipeline step 1.1) and why, before running anything. If a
+`file_info`/ion-frequency-table resource needs to be built or selected
+(see Prerequisites), name which one and what values will go in it before
+writing it. Ask whether the user is satisfied with these choices or wants
+to change any before you execute, and confirm back any changed value.
+
 **Report before installing something new or touching a script.** The
 `pip install` lines already listed under Prerequisites are the expected
 setup -- run those without asking. But if you hit a dependency problem

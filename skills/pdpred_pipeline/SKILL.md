@@ -42,6 +42,13 @@ wait for the user to confirm it before executing. A wrong `--target` in
 particular only shows up as a shape mismatch much later (see Anti-Patterns);
 catching it in the plan is a lot cheaper than after a training run.
 
+**State the actual values, not just which knob.** Say the exact
+`--max_length` (default 200) and `--target` (default `pep_bond`, but
+must be `charge` if this checkpoint will be used with `td_pred.py`) you
+intend to use, and for training, whether `--load_model` applies. Ask
+whether the user wants to keep these defaults or change any before you
+run, and confirm back any changed value before using it.
+
 **Report before installing something new or touching a script.** The
 `torch`/`torchinfo`/`h5py`/`numpy` this pipeline needs are assumed already
 installed, since this is the user's own TD-Pred code. If a run turns up a
