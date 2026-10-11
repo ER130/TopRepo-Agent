@@ -42,10 +42,19 @@ wait for the user to confirm it before executing. A wrong `--target` in
 particular only shows up as a shape mismatch much later (see Anti-Patterns);
 catching it in the plan is a lot cheaper than after a training run.
 
-**State the actual values, not just which knob.** Say the exact
-`--max_length` (default 200) and `--target` (default `pep_bond`, but
-must be `charge` if this checkpoint will be used with `td_pred.py`) you
-intend to use, and for training, whether `--load_model` applies. Ask
+**Ask which mode before writing the plan: A (quick) or B (detailed).**
+Check this session's conversation so far for an earlier answer first --
+if the user already picked a mode earlier in this same session, reuse it
+without asking again; a new session (e.g. the user closed and reopened
+the agent) has no earlier answer to find, so ask fresh. Mode A: a concise
+plan -- which step(s), against which files, nothing else. Mode B: the
+detailed plan below, with parameter values and why. Wait for the answer
+before writing the plan either way.
+
+**In Mode B, state the actual values, not just which knob.** Say the
+exact `--max_length` (default 200) and `--target` (default `pep_bond`,
+but must be `charge` if this checkpoint will be used with `td_pred.py`)
+you intend to use, and for training, whether `--load_model` applies. Ask
 whether the user wants to keep these defaults or change any before you
 run, and confirm back any changed value before using it.
 

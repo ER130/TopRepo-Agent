@@ -60,14 +60,23 @@ and wait for the user to confirm it before executing. Whether you get a
 table), so say which one you expect and why before running, not just
 after.
 
-**State the actual values, not just which knob.** Say the exact
-`--group-field` (the script's own default is `PROTEOFORM_ID`, but TopRepo
-files should use `DATABASE_SEQUENCE` -- flag this explicitly, since the
-tool's default is usually wrong for this project's data), `--seed`
-(default 42), and `--train-ratio`/`--test-ratio` (defaults 0.8 / 0.15,
-whichever applies per the 2-way/3-way check above) you intend to use.
-Ask whether the user wants to keep these or change any before you run,
-and confirm back any changed value before using it.
+**Ask which mode before writing the plan: A (quick) or B (detailed).**
+Check this session's conversation so far for an earlier answer first --
+if the user already picked a mode earlier in this same session, reuse it
+without asking again; a new session (e.g. the user closed and reopened
+the agent) has no earlier answer to find, so ask fresh. Mode A: a concise
+plan -- which tool, against which file, nothing else. Mode B: the
+detailed plan below, with parameter values and why. Wait for the answer
+before writing the plan either way.
+
+**In Mode B, state the actual values, not just which knob.** Say the
+exact `--group-field` (the script's own default is `PROTEOFORM_ID`, but
+TopRepo files should use `DATABASE_SEQUENCE` -- flag this explicitly,
+since the tool's default is usually wrong for this project's data),
+`--seed` (default 42), and `--train-ratio`/`--test-ratio` (defaults
+0.8 / 0.15, whichever applies per the 2-way/3-way check above) you intend
+to use. Ask whether the user wants to keep these or change any before you
+run, and confirm back any changed value before using it.
 
 **Report before touching a script.** Neither tool has external
 dependencies to install, but if a fix means editing something under
