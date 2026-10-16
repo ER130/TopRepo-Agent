@@ -69,6 +69,12 @@ plan -- which tool, against which file, nothing else. Mode B: the
 detailed plan below, with parameter values and why. Wait for the answer
 before writing the plan either way.
 
+**Mode A still means reasoning through each value, just not displaying
+it.** Work out the same recommended values as Mode B below before you
+actually run anything -- in particular still check `--group-field`
+against the real file headers rather than running with the script's
+`PROTEOFORM_ID` default just because Mode A's plan doesn't spell it out.
+
 **In Mode B, reason about each parameter and recommend a value -- don't
 just restate the script's default.**
 

@@ -81,6 +81,14 @@ plan -- steps and files only, skip the parameter list below. Mode B: the
 detailed plan below, with parameter values and why. Wait for the answer
 before writing the plan either way.
 
+**Mode A still means reasoning through each value, just not displaying
+it.** Work out the same recommended values as Mode B below before you
+actually run anything -- Mode A only changes what the *plan* shows, never
+a license to fall back to the tool's raw default unexamined. If a value
+genuinely needs the user's input to pick (e.g. `-f`, which has no
+default), ask for it even in Mode A -- the plan stays concise, the
+missing decision still can't be skipped.
+
 **In Mode B, reason about each parameter and recommend a value -- don't
 just surface the tool's default and ask "is this OK."** For each flag
 below, work out what it actually controls, decide whether the hard-coded

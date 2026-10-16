@@ -89,6 +89,13 @@ plan -- phases and files only, skip the detail below. Mode B: the detailed
 plan below, stating choices and why. Wait for the answer before writing
 the plan either way.
 
+**Mode A still means reasoning through each choice, just not displaying
+it.** Work out the same recommendations as Mode B below before you
+actually run anything -- Mode A only changes what the *plan* shows, never
+a license to default to the README's example or the shipped file_info
+unexamined. `<dataset_id>` has no default at all, so it still needs
+asking about even in Mode A.
+
 **In Mode B, reason about each choice and recommend one -- don't just
 list the options.** This skill has fewer numeric flags than the others,
 but it has real decision points, and "use the default/the README's

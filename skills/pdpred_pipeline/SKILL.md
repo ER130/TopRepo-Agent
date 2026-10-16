@@ -51,6 +51,13 @@ plan -- which step(s), against which files, nothing else. Mode B: the
 detailed plan below, with parameter values and why. Wait for the answer
 before writing the plan either way.
 
+**Mode A still means reasoning through each value, just not displaying
+it.** Work out the same recommended values as Mode B below before you
+actually run anything -- in particular still check the input's longest
+`DATABASE_SEQUENCE` against `--max_length`, and still pick `--target`
+based on what the checkpoint is for, rather than letting the script's
+defaults run unexamined just because Mode A's plan doesn't spell it out.
+
 **In Mode B, reason about each parameter and recommend a value -- don't
 just restate the default.**
 
