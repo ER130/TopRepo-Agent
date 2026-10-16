@@ -81,16 +81,38 @@ plan -- steps and files only, skip the parameter list below. Mode B: the
 detailed plan below, with parameter values and why. Wait for the answer
 before writing the plan either way.
 
-**In Mode B, list actual parameter values, not just step names.** For
-TopFD, state the flags you intend to use -- at minimum `-u` (threads,
-default 1) and whether `-a`/`-o`/`-g` apply (see step 2's Useful flags).
-For TopPIC, state `-f` (fixed modification -- this one has no default, it
-must be chosen explicitly: C57, C58, or neither), `-u`, and whether
-`-d`/`-x`/`-b`/`-B` apply (see step 3). Mark which values are this
-skill's own defaults and which you're choosing for this run, then ask
-explicitly whether the user is satisfied with them or wants to change any
-before you execute. If they ask for a change, confirm the new value back
-before using it.
+**In Mode B, reason about each parameter and recommend a value -- don't
+just surface the tool's default and ask "is this OK."** For each flag
+below, work out what it actually controls, decide whether the hard-coded
+default fits this specific run, and state your own recommended value with
+a short reason -- say explicitly when the recommendation differs from the
+default, and just as explicitly say "the default is right here, because
+..." when it isn't.
+
+- `-u` (threads, both tools): the default is 1, which is essentially never
+  the right value on a real machine -- check available cores and recommend
+  near that number instead of repeating the default.
+- `-a`/`-o`/`-g` on TopFD: recommend `-o` only once you've checked the
+  input actually lacks MS1 spectra; recommend `-g` only if the user has
+  said the HTML output isn't needed; otherwise recommend leaving `-a` at
+  its default (reads activation per-spectrum from the input).
+- `-f` on TopPIC has no default -- this isn't a keep-or-change question,
+  it's a real decision to make from the sample prep (standard
+  iodoacetamide alkylation -> C57; iodoacetic acid -> C58). Recommend
+  based on what you actually know about the sample prep; say plainly if
+  you don't know and need to ask, rather than picking one silently.
+- `-d` on TopPIC: recommend turning it on for any real identification run
+  -- without it, filtering falls back to raw E-values instead of an FDR
+  estimate, which is rarely what's actually wanted (reasonable to skip
+  only for a quick smoke test).
+- `-x`/`-b`/`-B`: recommend `-x` only once you've confirmed there's no
+  matching `.feature` file for the input; for `-b`/`-B`, check `toppic
+  --help` for what's actually installed before recommending a value
+  rather than assuming from memory.
+
+State the recommendation, then ask whether the user wants to keep it or
+change it before you execute -- confirm back any changed value before
+using it.
 
 **Report before installing something new or touching a script.** The
 apt packages and build steps already listed under Prerequisites are the
@@ -436,6 +458,7 @@ whenever the FASTA content changes, or use a new filename.
 | Attempting a native Windows build via `vendor/doc/windows_build.md` (MSYS2) because Docker isn't installed yet | This skill specifically routes Windows to Docker; the Windows build path exists upstream but is undocumented/unverified by this skill | Send the user to install Docker instead, wait for confirmation, re-check `docker info` |
 | Trusting the Docker image's TopFD/TopPIC version matches this skill's `--help`-verified flag defaults | The image hasn't been updated in 5+ years; see the staleness note under Prerequisites | Run `--help` inside the container if a flag's behavior seems off, same as the Core Philosophy rule for a source build |
 | Passing the msalign file before the FASTA to `toppic` (`toppic ... <input>_ms2.msalign <database>.fasta`) | The real usage is `toppic [options] database-file-name spectrum-file-name` -- FASTA must be first. This has already happened once on this project, in a session where the command was reconstructed from memory/context rather than read fresh from this file -- TopPIC then either errors immediately or silently tries to parse the wrong file as the database | Before running, check the argument order against step 3's example above (or a fresh `toppic --help`) -- don't trust a remembered or previously-typed version of this command |
+| Copying a flag's default straight into the Mode B plan without reasoning about whether it fits this run (e.g. leaving `-u` at 1, or picking `-f` without checking the sample prep) | A restated default isn't a recommendation -- defeats the point of Mode B, and for a no-default flag like `-f` it means silently guessing | Check the actual context first (core count, sample prep, presence of a `.feature` file) and state a recommended value with a reason, flagging when it differs from the default |
 
 ## Resources
 

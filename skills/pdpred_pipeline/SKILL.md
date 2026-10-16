@@ -51,12 +51,28 @@ plan -- which step(s), against which files, nothing else. Mode B: the
 detailed plan below, with parameter values and why. Wait for the answer
 before writing the plan either way.
 
-**In Mode B, state the actual values, not just which knob.** Say the
-exact `--max_length` (default 200) and `--target` (default `pep_bond`,
-but must be `charge` if this checkpoint will be used with `td_pred.py`)
-you intend to use, and for training, whether `--load_model` applies. Ask
-whether the user wants to keep these defaults or change any before you
-run, and confirm back any changed value before using it.
+**In Mode B, reason about each parameter and recommend a value -- don't
+just restate the default.**
+
+- `--max_length`: the default is 200, but check the actual input's
+  longest `DATABASE_SEQUENCE` first (see step 1's caveat below) -- a
+  longer proteoform than `--max_length` isn't skipped, it raises an
+  `IndexError` and aborts the conversion partway through. Recommend 200
+  only once you've confirmed it covers the data; otherwise recommend
+  raising it to cover the longest sequence and say by how much.
+- `--target`: the script's default is `pep_bond`, but recommend `charge`
+  whenever the checkpoint being trained is meant for step 3b's
+  `td_pred.py` (which hardcodes a `charge`-shaped output and can't use a
+  `pep_bond`/`b_y` checkpoint) -- ask what the checkpoint is for before
+  defaulting to `pep_bond`, don't let the script's default decide it.
+- `--load_model`: no default -- recommend fine-tuning from an existing
+  checkpoint (and say which one) when one already exists for this
+  dataset/species and fits the intended `--target`; recommend training
+  from scratch only when none does.
+
+State the recommended values, then ask whether the user wants to keep
+them or change any before you run, and confirm back any changed value
+before using it.
 
 **Report before installing something new or touching a script.** The
 `torch`/`torchinfo`/`h5py`/`numpy` this pipeline needs are assumed already
@@ -195,6 +211,7 @@ above.
 | Launching a full training run without warning the user | Can take hours; blocks the loop if run in the foreground | Confirm epoch count/expected runtime first, run in the background |
 | Running step 1 on a new species/dataset without checking sequence lengths | `encode_spectrum`/`spectrum_anno` raise `IndexError` and abort partway through the file if any `DATABASE_SEQUENCE` is longer than `--max_length` -- you lose the whole run, not just that one spectrum | Check the input's longest `DATABASE_SEQUENCE` against `--max_length` before running, or raise `--max_length` to cover it |
 | Writing a checkpoint/log/prediction straight to the project root or scattering runs across ad-hoc paths | Runs from different datasets/species pile up ungrouped -- hard to find or compare later | Resolve `<train_dir>`/`<predict_dir>` once per run (see Pipeline above), `mkdir -p` it first, and point `--out`/`--output` and the log `tee` at it |
+| Restating `--max_length`/`--target`'s script default in the plan without checking the actual input or what the checkpoint is for | A restated default isn't a recommendation; a wrong `--target` in particular only surfaces as a shape mismatch much later, after a training run already happened | Check the input's longest `DATABASE_SEQUENCE` and the checkpoint's intended use first, recommend accordingly, flag when it differs from the default |
 
 ## Resources
 
