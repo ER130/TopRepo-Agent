@@ -80,13 +80,23 @@ file, which annotation script) before any command runs is much cheaper
 than after, especially given how many steps here fail silently rather
 than loudly (see Core Philosophy).
 
-**State `<dataset_id>` and which resource files explicitly, and ask.**
-`<dataset_id>` has no default -- say exactly what you're choosing to use
-(see Pipeline step 1.1) and why, before running anything. If a
-`file_info`/ion-frequency-table resource needs to be built or selected
-(see Prerequisites), name which one and what values will go in it before
-writing it. Ask whether the user is satisfied with these choices or wants
-to change any before you execute, and confirm back any changed value.
+**Ask which mode before writing the plan: A (quick) or B (detailed).**
+Check this session's conversation so far for an earlier answer first --
+if the user already picked a mode earlier in this same session, reuse it
+without asking again; a new session (e.g. the user closed and reopened
+the agent) has no earlier answer to find, so ask fresh. Mode A: a concise
+plan -- phases and files only, skip the detail below. Mode B: the detailed
+plan below, stating choices and why. Wait for the answer before writing
+the plan either way.
+
+**In Mode B, state `<dataset_id>` and which resource files explicitly,
+and ask.** `<dataset_id>` has no default -- say exactly what you're
+choosing to use (see Pipeline step 1.1) and why, before running anything.
+If a `file_info`/ion-frequency-table resource needs to be built or
+selected (see Prerequisites), name which one and what values will go in
+it before writing it. Ask whether the user is satisfied with these
+choices or wants to change any before you execute, and confirm back any
+changed value.
 
 **Report before installing something new or touching a script.** The
 `pip install` lines already listed under Prerequisites are the expected
