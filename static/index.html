@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -125,9 +125,9 @@
     <div id="uploadNote"></div>
     <div id="inputRow">
       <input type="file" id="fileInput">
-      <button id="attachBtn" title="上传文件">📎</button>
-      <textarea id="textInput" rows="1" placeholder="输入你的问题,按 Enter 发送(Shift+Enter 换行)"></textarea>
-      <button id="sendBtn">发送</button>
+      <button id="attachBtn" title="Upload file">📎</button>
+      <textarea id="textInput" rows="1" placeholder="Type your question, press Enter to send (Shift+Enter for a new line)"></textarea>
+      <button id="sendBtn">Send</button>
     </div>
   </div>
 </div>
@@ -176,7 +176,7 @@ function showThinking() {
   hideThinking();
   const row = document.createElement("div");
   row.className = "row assistant";
-  row.innerHTML = '<div class="bubble thinking">正在处理</div>';
+  row.innerHTML = '<div class="bubble thinking">Thinking</div>';
   logEl.appendChild(row);
   logEl.scrollTop = logEl.scrollHeight;
   thinkingEl = row;
@@ -207,14 +207,14 @@ async function sendMessage() {
     hideThinking();
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      renderItem({ id: ++lastId, role: "system", text: "出错了: " + (err.detail || res.status) });
+      renderItem({ id: ++lastId, role: "system", text: "Error: " + (err.detail || res.status) });
       return;
     }
     const data = await res.json();
     renderItems(data.items);
   } catch (e) {
     hideThinking();
-    renderItem({ id: ++lastId, role: "system", text: "网络错误,请检查服务是否还在运行: " + e });
+    renderItem({ id: ++lastId, role: "system", text: "Network error, check whether the server is still running: " + e });
   } finally {
     sendBtn.disabled = false;
     textInput.focus();
@@ -237,20 +237,20 @@ attachBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) return;
-  uploadNote.textContent = "正在上传 " + file.name + " ...";
+  uploadNote.textContent = "Uploading " + file.name + " ...";
   const form = new FormData();
   form.append("file", file);
   try {
     const res = await fetch("/api/upload", { method: "POST", body: form });
     const data = await res.json();
     if (!res.ok) {
-      uploadNote.textContent = "上传失败: " + (data.detail || res.status);
+      uploadNote.textContent = "Upload failed: " + (data.detail || res.status);
       return;
     }
     renderItems(data.items);
-    uploadNote.textContent = "已上传: " + data.path;
+    uploadNote.textContent = "Uploaded: " + data.path;
   } catch (e) {
-    uploadNote.textContent = "上传失败: " + e;
+    uploadNote.textContent = "Upload failed: " + e;
   } finally {
     fileInput.value = "";
   }
