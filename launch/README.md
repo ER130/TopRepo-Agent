@@ -30,10 +30,15 @@ in the background -- it only listens on `localhost`.
 
 ## If it doesn't work
 
-- `start_webui.bat` assumes the project's virtualenv is named `.venv`
-  right next to `code.py`/`server.py`, matching this project's setup so
-  far -- if yours is named differently, edit the `.venv` in that file to
-  match.
+- `start_webui.bat` has the WSL path to the venv's `activate` script
+  hardcoded in a `VENV_ACTIVATE` variable near the top (on this project
+  so far, that venv actually lives in a sibling project folder, not
+  inside `TopRepo-Agent` itself) -- if yours is somewhere else, edit
+  that one line. If you'd rather not depend on another project's venv
+  at all, set up a dedicated one here instead: `python3 -m venv .venv`
+  from the `TopRepo-Agent` folder, then `source .venv/bin/activate && pip
+  install -r requirements.txt`, then point `VENV_ACTIVATE` at
+  `"%WSLDIR%/.venv/bin/activate"` in the script.
 - Assumes `wsl.exe` is on your Windows PATH (true by default once WSL
   itself is installed).
 - **Not run on a real Windows machine this session** -- written and

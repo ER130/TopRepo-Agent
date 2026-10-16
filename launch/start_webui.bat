@@ -24,8 +24,14 @@ if "%WSLDIR%"=="" (
 
 echo Starting TopRepo Agent web server in WSL -- first launch can take a
 echo few seconds while the model client and skills load...
-rem .venv is this project's venv name so far -- edit below if yours differs.
-start "TopRepo Agent server" /min wsl.exe bash -lc "cd '%WSLDIR%' && source .venv/bin/activate && exec uvicorn server:app --host 0.0.0.0 --port %PORT%"
+rem WSL-style path to the venv's activate script. On this machine so far
+rem the working venv isn't inside TopRepo-Agent itself -- it's this
+rem sibling project's -- so this is hardcoded rather than assumed
+rem relative to %WSLDIR%. Edit this one line if yours is somewhere else
+rem (e.g. "%WSLDIR%/.venv/bin/activate" for a venv inside the project
+rem folder, the more usual layout).
+set "VENV_ACTIVATE=/mnt/d/Projects/learn-claude-code/.venv/bin/activate"
+start "TopRepo Agent server" /min wsl.exe bash -lc "cd '%WSLDIR%' && source '%VENV_ACTIVATE%' && exec uvicorn server:app --host 0.0.0.0 --port %PORT%"
 
 set tries=0
 :wait
