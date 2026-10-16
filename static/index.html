@@ -47,8 +47,18 @@
 
   .bubble {
     max-width: 78%; padding: 10px 14px; border-radius: 14px;
-    line-height: 1.5; font-size: 14.5px; white-space: pre-wrap; word-wrap: break-word;
+    line-height: 1.5; font-size: 14.5px; word-wrap: break-word;
   }
+  /* pre-wrap only on plain-text bubbles (set via textContent) so a
+     user's own manual line breaks survive. The assistant bubble gets
+     real HTML from marked.parse() via innerHTML, which always inserts
+     literal newlines between block tags (<p>...</p>\n<ul>\n<li>...) --
+     pre-wrap there would render each of those as an extra visible line
+     break on top of the normal <ul>/<li> layout, which is what produced
+     the large blank gaps where a Mode A/B option list should have been
+     visible. marked's breaks:true already turns an intentional single
+     newline inside a paragraph into <br>, so normal flow is correct. */
+  .row.user .bubble, .row.system .bubble { white-space: pre-wrap; }
   .row.user .bubble {
     background: var(--user-bubble); color: var(--user-text);
     border-bottom-right-radius: 4px;

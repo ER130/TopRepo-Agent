@@ -83,6 +83,11 @@ a turn triggered from a web request runs off the process's main thread,
 so that check fails closed with a plain denial instead of hanging on
 `input()`. The CLI keeps the interactive y/N prompt unchanged.
 
+**Windows + WSL launcher**: double-click `Start TopRepo Agent.vbs` at
+the project root to start this server in WSL and open the browser --
+no setup step, no console window, no typing a command, no typing
+`localhost:8000` by hand. See `launch/README.md`.
+
 ## The pipeline
 
 ```
