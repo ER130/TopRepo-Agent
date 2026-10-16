@@ -19,8 +19,9 @@ Two things in one repo:
 
 The agent itself, following [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)'s
 stages s07 through s13 (skipping s14's MCP plugin). Run it directly with
-`pip install anthropic python-dotenv pyyaml`, a `.env` with
-`ANTHROPIC_API_KEY` and `MODEL_ID` set, then `python3 code.py`.
+`pip install -r requirements.txt`, a `.env` with `ANTHROPIC_API_KEY` and
+`MODEL_ID` set, then `python3 code.py` -- or see "Web UI" below for a
+browser front end to the same agent.
 
 | Capability | What it adds | Key tools |
 |---|---|---|
@@ -53,6 +54,34 @@ of it is gitignored:
 | `.scheduled_tasks.json` | durable (`durable=true`) cron jobs, so they survive a restart |
 | `.mailboxes/` | one JSONL file per agent (`lead`, or a teammate's name); a message is deleted once read |
 | `.worktrees/` | task-bound Git worktree checkouts, each on its own `wt/<name>` branch |
+
+## Web UI
+
+`server.py` is a thin FastAPI wrapper around `code.py` for users who'd
+rather not read a terminal full of tool-call traces. It imports `code.py`
+as a library (never re-implements its logic) and drives the exact same
+`session_history`/`agent_lock`/`run_agent_turn_locked` the CLI uses.
+
+```
+pip install -r requirements.txt
+uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+Run it from the project root (same as `python3 code.py`) so `WORKDIR`
+resolves the same way. Open `http://localhost:8000/` for a chat page with
+a text box and a file-upload button (uploads land in `uploads/`, and the
+agent is told the saved path immediately, without you repeating it in the
+next message). The page shows only the model's actual replies -- never a
+`[HOOK] ...`/`> bash ...` trace line, since those are only ever printed to
+the server process's own stdout and never enter `session_history`. A
+background-task result or cron firing (no one typing) shows up in the
+page on its own too, via the same long-polled `/api/history`.
+
+**Known gap**: `check_permission`'s destructive-command/fabricated-data-write
+prompt (the CLI's `Allow? [y/N]`) has no equivalent in the web UI yet --
+a turn triggered from a web request runs off the process's main thread,
+so that check fails closed with a plain denial instead of hanging on
+`input()`. The CLI keeps the interactive y/N prompt unchanged.
 
 ## The pipeline
 
