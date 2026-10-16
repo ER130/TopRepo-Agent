@@ -89,14 +89,36 @@ plan -- phases and files only, skip the detail below. Mode B: the detailed
 plan below, stating choices and why. Wait for the answer before writing
 the plan either way.
 
-**In Mode B, state `<dataset_id>` and which resource files explicitly,
-and ask.** `<dataset_id>` has no default -- say exactly what you're
-choosing to use (see Pipeline step 1.1) and why, before running anything.
-If a `file_info`/ion-frequency-table resource needs to be built or
-selected (see Prerequisites), name which one and what values will go in
-it before writing it. Ask whether the user is satisfied with these
-choices or wants to change any before you execute, and confirm back any
-changed value.
+**Mode A still means reasoning through each choice, just not displaying
+it.** Work out the same recommendations as Mode B below before you
+actually run anything -- Mode A only changes what the *plan* shows, never
+a license to default to the README's example or the shipped file_info
+unexamined. `<dataset_id>` has no default at all, so it still needs
+asking about even in Mode A.
+
+**In Mode B, reason about each choice and recommend one -- don't just
+list the options.** This skill has fewer numeric flags than the others,
+but it has real decision points, and "use the default/the README's
+example" isn't a safe answer for any of them:
+
+- `<dataset_id>` has no default at all -- recommend one from the actual
+  data (a ProteomeXchange/MassIVE accession if the dataset has one,
+  otherwise a stable name you'll reuse everywhere) and say why, before
+  running anything.
+- Step 1.5's 4th argument: check whether this dataset is already in
+  TopRepo's own published corpus (look for its msalign filename in the
+  shipped `toprepo_file_info_v1.2.1.tsv`) before recommending which file to
+  pass -- if it's not there, recommend building a custom one with
+  `make_file_info_tsv.py` (the shipped file silently 0-rows an inner join
+  otherwise, see Core Philosophy); don't default to the shipped file just
+  because the README's example does.
+- Step 2.3's annotation script: recommend
+  `msalign_anno_based_frequency.py` (needs the shipped `--table`) unless
+  the user specifically wants the simpler nearest-mass behavior with no
+  frequency filtering -- say which one and why before running it.
+
+Ask whether the user is satisfied with these recommendations or wants to
+change any before you execute, and confirm back any changed value.
 
 **Report before installing something new or touching a script.** The
 `pip install` lines already listed under Prerequisites are the expected
@@ -312,6 +334,7 @@ commands above are the more predictable path.
 | Assuming `msalign_anno.py` and `msalign_anno_based_frequency.py` are interchangeable | Different matching logic (nearest-mass vs. frequency-filtered) and different required inputs (the latter needs `--table`) | Default to `msalign_anno_based_frequency.py` (the README's own choice) unless the user asks for the simpler one |
 | Running Phase 3 because it "seems like the next step" | It's a parallel, optional output (annotated mgf); `ms_process`/`pdpred_pipeline` only need Phase 2's annotated msalign | Skip Phase 3 unless the user specifically asks for an annotated mgf |
 | Hand-editing a file under `vendor/` to fix a bug instead of working around it from this skill's own layer | `vendor/` is a frozen copy of someone else's code (see Core Philosophy) -- an in-place edit silently diverges from `VENDORED_COMMIT.txt` and gets lost/conflicts on the next re-vendor | Fix it in `scripts/` (a wrapper, a preprocessing step) the way `strip_toppic_preamble.py` already does, not inside `vendor/` |
+| Defaulting to the shipped `toprepo_file_info_v1.2.1.tsv` or the README's own example choice without checking whether it actually fits this dataset | Same "restated the default without reasoning" failure as the other 3 skills' parameter lists -- here it means a silent 0-row join instead of a wrong number | Check the dataset against the shipped corpus/options first, and say why before running (see Before You Start) |
 | Vendoring a fresh `pip install` of `pandas`/`numpy`/`pyteomics`/`torch` into a shared environment without asking | Can silently up/downgrade packages another project on the same machine depends on | Prefer a virtualenv/conda env for TopRepo when one isn't already set up; confirm with the user first if unsure |
 
 ## Resources

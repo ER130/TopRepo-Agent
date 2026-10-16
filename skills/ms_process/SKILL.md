@@ -69,14 +69,35 @@ plan -- which tool, against which file, nothing else. Mode B: the
 detailed plan below, with parameter values and why. Wait for the answer
 before writing the plan either way.
 
-**In Mode B, state the actual values, not just which knob.** Say the
-exact `--group-field` (the script's own default is `PROTEOFORM_ID`, but
-TopRepo files should use `DATABASE_SEQUENCE` -- flag this explicitly,
-since the tool's default is usually wrong for this project's data),
-`--seed` (default 42), and `--train-ratio`/`--test-ratio` (defaults
-0.8 / 0.15, whichever applies per the 2-way/3-way check above) you intend
-to use. Ask whether the user wants to keep these or change any before you
-run, and confirm back any changed value before using it.
+**Mode A still means reasoning through each value, just not displaying
+it.** Work out the same recommended values as Mode B below before you
+actually run anything -- in particular still check `--group-field`
+against the real file headers rather than running with the script's
+`PROTEOFORM_ID` default just because Mode A's plan doesn't spell it out.
+
+**In Mode B, reason about each parameter and recommend a value -- don't
+just restate the script's default.**
+
+- `--group-field`: the script's own default is `PROTEOFORM_ID`, but check
+  the actual input file's headers -- TopRepo-annotated files carry
+  `DATABASE_SEQUENCE` instead, so recommend that rather than the script's
+  default (left alone, it would silently group by a field this project's
+  files don't populate the way it expects). Recommend the protein
+  accession field instead only if the user actually wants protein-level,
+  not proteoform-level, splitting.
+- `--seed`: 42 is an arbitrary convention, not a value worth re-deriving --
+  recommend keeping it unless the user wants multiple independent splits
+  to compare, in which case recommend a different seed per split and say so.
+- `--train-ratio`/`--test-ratio`: the 0.8/0.15 defaults are reasonable
+  general-purpose choices, but check the dataset size first -- a small
+  dataset (a few hundred groups) can leave val/test too thin at 15% each
+  to be meaningful; recommend a larger val/test share for a small dataset
+  and say why, rather than defaulting blindly.
+
+State which case (2-way vs 3-way, per the check above) applies before
+recommending a ratio. Ask whether the user wants to keep these recommended
+values or change any before you run, and confirm back any changed value
+before using it.
 
 **Report before touching a script.** Neither tool has external
 dependencies to install, but if a fix means editing something under
@@ -167,6 +188,7 @@ dataset rather than re-deriving it each run.
 | Assuming it's always a 2-way train/val split | Whether you get 2-way or 3-way depends on whether `<input>_test<ext>` already exists in `--val-file-dir` -- easy to miss on a first run | Read the "Found existing test set" / "No existing test set" line the script prints; don't assume from the command alone |
 | Copying either script elsewhere before running it | Meant to be invoked from its own path so the loader can find it consistently | Always call `skills/ms_process/scripts/<name>.py` in place |
 | Writing the scans TSV to a random/temp path instead of alongside the split it came from | Makes it hard to find later | Write next to `<val_dir>` (see Tool 2 above); resolve that path once, don't scatter outputs |
+| Restating a flag's script default in the plan without checking it against the actual input file or dataset size | A restated default isn't a recommendation, and the script's own default (`PROTEOFORM_ID`) is usually wrong for this project's files | Check the real headers/dataset size first, recommend accordingly, flag when it differs from the default |
 
 ## Resources
 
