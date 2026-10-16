@@ -2726,7 +2726,8 @@ TOOL_HANDLERS = {
 
 # -- Hooks --
 
-HOOKS = {"UserPromptSubmit": [], "PreToolUse": [], "PostToolUse": [], "Stop": []}
+HOOKS = {"UserPromptSubmit": [], "PreToolUse": [], "PostToolUse": [], "Stop": [],
+         "TurnComplete": []}
 
 
 def register_hook(event: str, callback):
@@ -3281,20 +3282,32 @@ def cron_scheduler_loop(stop_event: threading.Event = RUNTIME_STOP):
         poll_due_jobs(datetime.now())
 
 
-def print_latest_assistant_text(messages: list):
+def latest_assistant_text(messages: list) -> str:
+    """Walk back to the most recent assistant message and return its text
+    blocks joined together, skipping tool_use/tool_result noise entirely.
+    Used by the CLI's own printer below, and reused as-is by server.py so
+    a web frontend shows exactly the same thing the CLI prints -- the
+    model's reply, never a tool-call trace line."""
     for message in reversed(messages):
         if message.get("role") != "assistant":
             continue
         content = message.get("content", "")
         if isinstance(content, str):
-            print(content)
-        else:
-            for block in content:
-                if getattr(block, "type", None) == "text":
-                    print(block.text)
-                elif isinstance(block, dict) and block.get("type") == "text":
-                    print(block.get("text", ""))
-        return
+            return content
+        parts = []
+        for block in content:
+            if getattr(block, "type", None) == "text":
+                parts.append(block.text)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(parts)
+    return ""
+
+
+def print_latest_assistant_text(messages: list):
+    text = latest_assistant_text(messages)
+    if text:
+        print(text)
 
 
 def run_agent_turn_locked(user_query: str | None = None):
@@ -3304,6 +3317,7 @@ def run_agent_turn_locked(user_query: str | None = None):
     agent_loop(session_history, user_query or "")
     print_latest_assistant_text(session_history)
     print()
+    trigger_hooks("TurnComplete", session_history)
 
 
 def has_pending_background() -> bool:

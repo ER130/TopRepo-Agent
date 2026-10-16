@@ -6,6 +6,11 @@ Train_result/
 Predict_result/
 TopRepo_Result/
 
+# Files uploaded through the web UI (server.py) -- per-user data, same
+# treatment as the folders above.
+uploads/*
+!uploads/.gitkeep
+
 # Build output from compiling the vendored toppic-suite C++ source locally
 # -- machine-specific, not part of what's vendored. See README.md
 # "Vendored code".
