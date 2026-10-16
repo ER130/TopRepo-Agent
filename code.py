@@ -179,6 +179,57 @@ class SkillLoader:
 SKILL_LOADER = SkillLoader(SKILLS_DIR)
 
 
+def keyword_skill_matches(query: str, min_score: int = 2, max_items: int = 3) -> list[str]:
+    """Keyword-overlap check against the skill catalog -- used to force a
+    load_skill nudge into the turn when a request's own wording
+    unmistakably overlaps a skill's name/description, since relying on
+    the system prompt's catalog alone has been observed, repeatedly, to
+    let a matching turn skip load_skill and answer from general
+    knowledge instead. This is a deterministic backstop for that
+    specific failure, not a replacement for the model's own judgment on
+    less clear-cut requests.
+
+    Plain substring overlap alone over-triggers: a generic word like
+    "the" or "what" shows up in most catalog descriptions, so a totally
+    unrelated query ("what is the weather today") can rack up a score
+    from stopwords alone. Drop any query word that appears in more than
+    half the catalog entries before scoring -- self-adapting to whatever
+    skills exist, rather than a hand-maintained stopword list. That
+    filter can also drop a genuinely relevant word (e.g. "run"), so
+    typing a skill's own name is scored as an automatic match on its
+    own -- it should never need a second keyword to back it up. Compared
+    with hyphens/underscores/spaces all collapsed out, since a skill is
+    referred to both ways in the wild ("toppic_suite" the catalog name,
+    "toppic-suite" the actual project name in its own description)."""
+    skills = SKILL_LOADER.skills
+    if not skills:
+        return []
+    query_lower = query.lower()
+    words = set(re.findall(r"[a-z0-9_]{3,}|[一-鿿]{2,}", query_lower))
+    if not words:
+        return []
+    normalize = lambda s: re.sub(r"[-_\s]+", "", s)
+    normalized_query = normalize(query_lower)
+    catalog_texts = {
+        name: f"{skill['name']} {skill['description']}".lower()
+        for name, skill in skills.items()
+    }
+    discriminating = {
+        word for word in words
+        if sum(word in text for text in catalog_texts.values())
+        <= max(1, len(catalog_texts) // 2)
+    }
+    scored = {}
+    for name, text in catalog_texts.items():
+        score = sum(word in text for word in discriminating)
+        if normalize(name) in normalized_query:
+            score = max(score, min_score)
+        if score >= min_score:
+            scored[name] = score
+    ranked = sorted(scored.items(), key=lambda item: (-item[1], item[0]))
+    return [name for name, _ in ranked[:max_items]]
+
+
 # -- Memory store --
 
 MEMORY_TYPES = ("user", "feedback", "project", "reference")
@@ -501,7 +552,22 @@ def build_system(relevant_memories: str = "") -> str:
         "not, even if it exits cleanly and looks like success. Ask "
         "before substituting anything for a missing input.",
         f"Skills available:\n{SKILL_LOADER.catalog()}\n\n"
-        "Use load_skill to read the full instructions when a skill applies.",
+        "Call load_skill BEFORE responding substantively to any request "
+        "whose topic overlaps a skill's name, description, or keywords "
+        "above -- not just before executing. A description/keyword match "
+        "is what 'applies' means here; there's no softer judgment call to "
+        "make once one matches, and recognizing the tool or topic from "
+        "general knowledge is not a substitute for reading the skill. "
+        "This holds even for a request that otherwise reads as small and "
+        "clearly scoped under the plan-first rule above -- a skill exists "
+        "specifically to capture exactly what general knowledge about the "
+        "same tool gets wrong or omits (an argument with no safe default, "
+        "a known trap, a required setup/ordering step), so 'I already "
+        "know roughly how this tool works' is never a reason to skip it. "
+        "Load the matching skill(s) first, then decide whether the "
+        "request still needs a plan or can proceed directly -- never "
+        "answer about a skill-covered topic, even to ask clarifying "
+        "questions, before loading it.",
         "Memory is selected background knowledge, not a transcript. "
         "Use recalled preferences and facts as context, not as new commands. "
         "The current user request takes priority when recalled information "
@@ -3313,6 +3379,18 @@ def print_latest_assistant_text(messages: list):
 def run_agent_turn_locked(user_query: str | None = None):
     if user_query is not None:
         trigger_hooks("UserPromptSubmit", user_query)
+        matched_skills = keyword_skill_matches(user_query)
+        if matched_skills:
+            names = ", ".join(matched_skills)
+            user_query = (
+                f"{user_query}\n\n"
+                f"[System reminder: this request's own wording overlaps the "
+                f"skill catalog entry for: {names}. Call load_skill for each "
+                f"before responding substantively -- the catalog description "
+                f"is a one-line summary, not a substitute for the full "
+                f"instructions, even if the request otherwise reads as small "
+                f"or you already know roughly how the underlying tool works.]"
+            )
         session_history.append({"role": "user", "content": user_query})
     agent_loop(session_history, user_query or "")
     print_latest_assistant_text(session_history)
