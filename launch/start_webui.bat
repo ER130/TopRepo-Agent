@@ -22,16 +22,28 @@ if "%WSLDIR%"=="" (
     exit /b 1
 )
 
+rem First run on this machine? Set up this project's own venv instead of
+rem assuming one exists anywhere -- a hardcoded path to some specific
+rem machine's venv would work on that one machine and nowhere else for
+rem anyone who clones this repo fresh. This makes the project
+rem self-contained: no manual venv setup, no path to edit.
+wsl.exe bash -lc "test -d '%WSLDIR%/.venv'"
+if %errorlevel% neq 0 (
+    echo First run detected -- setting up a Python virtual environment and
+    echo installing dependencies inside the project folder. This happens
+    echo once and may take a minute; a console window will show progress.
+    start "TopRepo Agent - first-time setup" /wait wsl.exe bash -lc "cd '%WSLDIR%' && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+    if %errorlevel% neq 0 (
+        echo Setup failed -- see the window above for the error, fix it,
+        echo then double-click this again.
+        pause
+        exit /b 1
+    )
+)
+
 echo Starting TopRepo Agent web server in WSL -- first launch can take a
 echo few seconds while the model client and skills load...
-rem WSL-style path to the venv's activate script. On this machine so far
-rem the working venv isn't inside TopRepo-Agent itself -- it's this
-rem sibling project's -- so this is hardcoded rather than assumed
-rem relative to %WSLDIR%. Edit this one line if yours is somewhere else
-rem (e.g. "%WSLDIR%/.venv/bin/activate" for a venv inside the project
-rem folder, the more usual layout).
-set "VENV_ACTIVATE=/mnt/d/Projects/learn-claude-code/.venv/bin/activate"
-start "TopRepo Agent server" /min wsl.exe bash -lc "cd '%WSLDIR%' && source '%VENV_ACTIVATE%' && exec uvicorn server:app --host 0.0.0.0 --port %PORT%"
+start "TopRepo Agent server" /min wsl.exe bash -lc "cd '%WSLDIR%' && source .venv/bin/activate && exec uvicorn server:app --host 0.0.0.0 --port %PORT%"
 
 set tries=0
 :wait
