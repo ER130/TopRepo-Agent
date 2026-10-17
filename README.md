@@ -20,7 +20,9 @@ Two things in one repo:
 The agent itself, following [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)'s
 stages s07 through s13 (skipping s14's MCP plugin). Run it directly with
 `pip install -r requirements.txt`, a `.env` with `ANTHROPIC_API_KEY` and
-`MODEL_ID` set, then `python3 code.py` -- or see "Web UI" below for a
+`MODEL_ID` set (`cp .env.example .env` and fill it in -- it also
+documents `ANTHROPIC_BASE_URL` for Anthropic-compatible providers other
+than Anthropic itself), then `python3 code.py` -- or see "Web UI" below for a
 browser front end to the same agent.
 
 | Capability | What it adds | Key tools |
