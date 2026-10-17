@@ -127,6 +127,7 @@ pull in the model-training playbook, and vice versa.
 | [`toprepo_pipeline`](skills/toprepo_pipeline/SKILL.md) | [TopRepo](https://github.com/toppic-suite/toprepo) (source vendored in `skills/toprepo_pipeline/vendor/`) | `toppic_suite`'s output | a merged info TSV, then the `DATABASE_SEQUENCE`-annotated `.msalign` that everything downstream needs |
 | [`ms_process`](skills/ms_process/SKILL.md) | two small original scripts (`skills/ms_process/scripts/`) | `toprepo_pipeline`'s annotated `.msalign` | group-aware train/val(/test) `.msalign` splits, a scan-metadata TSV |
 | [`pdpred_pipeline`](skills/pdpred_pipeline/SKILL.md) | the user's own TD-Pred model code (`skills/pdpred_pipeline/scripts/`) | `ms_process`'s splits/TSV | HDF5 tensors, a trained checkpoint, predicted spectra |
+| [`param_precedents`](skills/param_precedents/SKILL.md) | -- (reference data, nothing to run) | consulted by the other 4 skills during parameter reasoning | nothing -- it's a lookup, not a pipeline step |
 | [`code-review`](skills/code-review/SKILL.md) | -- | any diff/codebase | a review write-up (no files) |
 | [`pdf`](skills/pdf/SKILL.md) | pdftotext / PyMuPDF / ReportLab | a PDF | extracted text, merged/split/created PDFs |
 

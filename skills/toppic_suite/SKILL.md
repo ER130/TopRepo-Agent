@@ -106,7 +106,13 @@ default, and just as explicitly say "the default is right here, because
   its default (reads activation per-spectrum from the input).
 - `-f` on TopPIC has no default -- this isn't a keep-or-change question,
   it's a real decision to make from the sample prep (standard
-  iodoacetamide alkylation -> C57; iodoacetic acid -> C58). Recommend
+  iodoacetamide alkylation -> C57; iodoacetic acid -> C58). Check the
+  `param_precedents` skill for a matching species/instrument/method
+  before asking -- if a close precedent exists, lead with it (e.g.
+  "TopRepo's comparable E. coli datasets mostly used no fixed
+  modification unless alkylated -- was yours?") rather than a blind
+  yes/no question. Only about 19% of that corpus is alkylated, so a
+  precedent is never a reason to default toward C57 either -- recommend
   based on what you actually know about the sample prep; say plainly if
   you don't know and need to ask, rather than picking one silently.
 - `-d` on TopPIC: recommend turning it on for any real identification run

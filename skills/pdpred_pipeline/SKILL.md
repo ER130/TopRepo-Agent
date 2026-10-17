@@ -72,6 +72,13 @@ just restate the default.**
   `td_pred.py` (which hardcodes a `charge`-shaped output and can't use a
   `pep_bond`/`b_y` checkpoint) -- ask what the checkpoint is for before
   defaulting to `pep_bond`, don't let the script's default decide it.
+- If the training data comes from (or resembles) the TopRepo corpus,
+  check the `param_precedents` skill for the source dataset's
+  dissociation method before training. TD-Pred's own training data was
+  HCD/CID only -- a dataset with ETD/EThcD spectra (some do, even within
+  an otherwise HCD/CID project) is fragmentation the model was never
+  validated against; exclude those files or flag them to the user rather
+  than training on them unexamined.
 - `--load_model`: no default -- recommend fine-tuning from an existing
   checkpoint (and say which one) when one already exists for this
   dataset/species and fits the intended `--target`; recommend training

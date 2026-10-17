@@ -104,7 +104,10 @@ example" isn't a safe answer for any of them:
 - `<dataset_id>` has no default at all -- recommend one from the actual
   data (a ProteomeXchange/MassIVE accession if the dataset has one,
   otherwise a stable name you'll reuse everywhere) and say why, before
-  running anything.
+  running anything. Check the `param_precedents` skill for whether this
+  accession is already one of TopRepo's own 87 source datasets -- if so,
+  its published species, instrument, and processing details are already
+  documented there, which is worth surfacing to the user.
 - Step 1.5's 4th argument: check whether this dataset is already in
   TopRepo's own published corpus (look for its msalign filename in the
   shipped `toprepo_file_info_v1.2.1.tsv`) before recommending which file to

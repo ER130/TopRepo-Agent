@@ -93,6 +93,11 @@ just restate the script's default.**
   dataset (a few hundred groups) can leave val/test too thin at 15% each
   to be meaningful; recommend a larger val/test share for a small dataset
   and say why, rather than defaulting blindly.
+- If the input traces back to a known TopRepo source dataset, check the
+  `param_precedents` skill for whether it used FAIMS. A FAIMS run can
+  produce several msalign files from one underlying raw file (split by
+  compensation voltage) -- flag this to the user before splitting, since
+  it may affect what they consider a genuinely held-out group.
 
 State which case (2-way vs 3-way, per the check above) applies before
 recommending a ratio. Ask whether the user wants to keep these recommended
