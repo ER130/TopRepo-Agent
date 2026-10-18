@@ -1,7 +1,7 @@
 # TopRepo-Agent
 
-TopRepo-Agent is a Claude-powered coding agent (`code.py`) paired with a
-set of Agent Skills that together run a full top-down mass spectrometry
+TopRepo-Agent is a Claude-powered coding agent paired with a set of
+Agent Skills that together run a full top-down mass spectrometry
 proteomics pipeline -- from raw instrument data through deconvolution,
 proteoform identification, dataset annotation, and spectral-prediction
 model training -- so you don't need to know each underlying tool's
