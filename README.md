@@ -11,6 +11,8 @@ terminal or through a browser-based chat interface.
 ## Setup
 
 ```
+git clone https://github.com/ER130/TopRepo-Agent.git
+cd TopRepo-Agent
 pip install -r requirements.txt
 cp .env.example .env
 ```
