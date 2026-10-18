@@ -13,9 +13,9 @@ The model loads the full SKILL.md only when it calls load_skill.
 
     skills/                    Startup
     +------------------+       +------------------+
-    | code-review/     | ----> | SkillLoader      |
+    | toppic_suite/    | ----> | SkillLoader      |
     |   SKILL.md       |       | name + summary   |
-    | pdf/             |       +--------+---------+
+    | ms_process/      |       +--------+---------+
     |   SKILL.md       |                |
     +------------------+                v
                                  system prompt catalog
