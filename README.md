@@ -32,10 +32,12 @@ python3 code.py
 ```
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
-then open `http://localhost:8000/`. On Windows with WSL, double-click
-`Start TopRepo Agent.vbs` at the project root instead -- it sets
-everything up and opens the browser for you, no terminal needed. See
-`launch/README.md` for details.
+then open `http://localhost:8000/`. Or use the desktop launcher in
+`launch/` instead, which sets everything up (including its own `.venv`)
+and opens the browser for you, no terminal needed: double-click
+`launch/Start TopRepo Agent.vbs` on Windows (WSL) or
+`launch/Start TopRepo Agent.command` on macOS, or run
+`python3 launch/launch.py` on Linux. See `launch/README.md` for details.
 
 Note: in the web UI, a command the agent judges risky is refused
 automatically rather than prompting you to approve it, unlike the
