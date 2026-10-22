@@ -90,7 +90,9 @@ def wait_for_port(tries: int = 30) -> bool:
 
 def open_browser() -> None:
     url = f"http://localhost:{PORT}/"
-    if is_wsl():
+    wsl = is_wsl()
+    print(f"open_browser: is_wsl={wsl}")
+    if wsl:
         # Inside WSL there's no browser to open -- reach across to the
         # Windows host instead. explorer.exe is tried first: verified on a
         # real Windows+WSL machine to actually open the browser, unlike
@@ -99,11 +101,16 @@ def open_browser() -> None:
         # fails to open anything -- confirmed the hard way.
         for args in (["explorer.exe", url], ["wslview", url], ["cmd.exe", "/c", "start", "", url]):
             try:
-                subprocess.Popen(args)
+                proc = subprocess.Popen(args)
+                print(f"open_browser: launched {args!r} (pid {proc.pid})")
                 return
             except FileNotFoundError:
+                print(f"open_browser: {args[0]} not found, trying next")
                 continue
-    webbrowser.open(url)
+        print("open_browser: all WSL browser-open methods failed to launch")
+        return
+    opened = webbrowser.open(url)
+    print(f"open_browser: webbrowser.open returned {opened}")
 
 
 def stop_server() -> None:
