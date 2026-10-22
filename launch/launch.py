@@ -101,7 +101,12 @@ def open_browser() -> None:
         # fails to open anything -- confirmed the hard way.
         for args in (["explorer.exe", url], ["wslview", url], ["cmd.exe", "/c", "start", "", url]):
             try:
-                proc = subprocess.Popen(args)
+                # start_new_session detaches this from our process group --
+                # without it, the Windows-interop process launching
+                # explorer.exe can get torn down along with the WSL bash
+                # session the moment this script exits, before it's
+                # actually finished opening anything.
+                proc = subprocess.Popen(args, start_new_session=True)
                 print(f"open_browser: launched {args!r} (pid {proc.pid})")
                 return
             except FileNotFoundError:
