@@ -18,6 +18,8 @@ resolves the same way for both).
 """
 
 import importlib.util
+import os
+import signal
 import sys
 import threading
 import time
@@ -85,9 +87,54 @@ def _on_turn_complete(messages: list):
 agent_core.register_hook("TurnComplete", _on_turn_complete)
 
 
+# -- Idle auto-stop + manual stop --
+#
+# A non-technical user closing the browser tab has no reason to think the
+# server (and whatever it's running) is still alive in the background --
+# there's no reliable way for a web page to catch "the user closed this
+# tab" and ask them first (beforeunload can only show the browser's own
+# fixed "leave this page?" prompt, not a custom choice, and fires on a
+# plain refresh too). So instead: track the last time any request came
+# in -- including the frontend's own long-poll, so "no requests at all"
+# really does mean "no tab has this page open anymore" -- and shut down
+# after IDLE_TIMEOUT_SECONDS with nothing. A visible Stop Server button
+# in the UI covers the "I'm done right now" case directly.
+
+IDLE_TIMEOUT_SECONDS = 15 * 60
+
+_last_activity = time.time()
+_activity_lock = threading.Lock()
+
+
+def _touch_activity() -> None:
+    global _last_activity
+    with _activity_lock:
+        _last_activity = time.time()
+
+
+def _trigger_shutdown(delay: float = 0.5) -> None:
+    def _shutdown():
+        time.sleep(delay)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_shutdown, daemon=True).start()
+
+
+def _idle_watchdog() -> None:
+    while True:
+        time.sleep(60)
+        with _activity_lock:
+            idle_for = time.time() - _last_activity
+        if idle_for >= IDLE_TIMEOUT_SECONDS:
+            print(f"No requests for {int(idle_for)}s -- shutting down.")
+            _trigger_shutdown(delay=0)
+            return
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     agent_core.start_runtime_threads()
+    threading.Thread(target=_idle_watchdog, daemon=True).start()
     try:
         yield
     finally:
@@ -95,6 +142,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _track_activity(request, call_next):
+    _touch_activity()
+    return await call_next(request)
+
+
+@app.post("/api/stop")
+def stop():
+    _trigger_shutdown()
+    return {"status": "stopping"}
 
 
 class ChatRequest(BaseModel):
