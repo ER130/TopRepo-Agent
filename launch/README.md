@@ -26,9 +26,14 @@ Double-click **`Start TopRepo Agent.vbs`** in this folder. It:
   second server) and opens your default browser straight to it.
 
 `start_webui.bat` in this folder is the script that actually invokes
-WSL; the `.vbs` just runs it hidden -- double-click `start_webui.bat`
-directly instead if you want to see a console on every run, not just
-the first (see "If it doesn't work" below).
+WSL; the `.vbs` just runs it hidden and waits for it to finish -- if it
+exits with an error, the `.vbs` pops up a message box saying so rather
+than failing silently. For the actual error text, don't double-click
+`start_webui.bat` directly (with no console held open on error, it'll
+flash closed too fast to read) -- open Command Prompt, `cd` into this
+`launch` folder, and run `start_webui.bat` there instead, so the output
+stays on screen in that already-open window (see "If it doesn't work"
+below).
 
 Assumes `wsl.exe` is on your Windows PATH (true by default once WSL
 itself is installed) and that `python3 -m venv` works inside your WSL
@@ -73,10 +78,9 @@ and run it there). Or just leave the server running in the background
 - If you already have a working venv elsewhere and would rather point
   at that than let this create a new one, edit `launch.py`'s
   `venv_python()` to return that venv's `python3` instead.
-- **Windows path not verified end to end on a real machine this
-  session** -- written and reasoned through against documented
-  `cmd.exe`/WSL/VBScript behavior, not verified the way the rest of
-  this repo's Linux-side instructions are. If double-clicking
-  `Start TopRepo Agent.vbs` does nothing visible, double-click
-  `start_webui.bat` directly instead so its console window stays open
-  and shows what actually happened.
+- If double-clicking `Start TopRepo Agent.vbs` does nothing and no
+  message box appears either, confirm `wsl.exe` is actually on your
+  Windows PATH first -- open Command Prompt, `cd` into this `launch`
+  folder, and run `start_webui.bat` there to see the real error (not by
+  double-clicking the `.bat` directly, which closes too fast to read
+  once it's done).
