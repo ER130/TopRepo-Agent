@@ -86,9 +86,12 @@ def open_browser() -> None:
     url = f"http://localhost:{PORT}/"
     if is_wsl():
         # Inside WSL there's no browser to open -- reach across to the
-        # Windows host instead, same as the `explorer.exe`/`cmd.exe`
-        # interop trick WSL users rely on for this.
-        for args in (["cmd.exe", "/c", "start", "", url], ["wslview", url], ["explorer.exe", url]):
+        # Windows host instead. explorer.exe is tried first: verified on a
+        # real Windows+WSL machine to actually open the browser, unlike
+        # `cmd.exe /c start "" <url>`, which launches without error (so the
+        # FileNotFoundError fallback below never triggers) but silently
+        # fails to open anything -- confirmed the hard way.
+        for args in (["explorer.exe", url], ["wslview", url], ["cmd.exe", "/c", "start", "", url]):
             try:
                 subprocess.Popen(args)
                 return
