@@ -178,10 +178,17 @@ scan TSV built from it stay together.
 
 **Resolving `<val_dir>`/`<split_out_dir>`**: don't assume a name -- if the
 user already has a location for this dataset's split/validation files, use
-that. `Val_File/` at the project root is this project's own default when
-starting fresh (sibling to `skills/`, `code.py`), but it's a suggestion,
-not a requirement; ask if it's genuinely unclear, and resolve it once per
-dataset rather than re-deriving it each run.
+that. Otherwise this is `runs/<run_name>/03_ms_process/` -- see
+`skills/_shared/run_layout.md` for what `<run_name>` is and the full
+`runs/` layout. Use the same directory for both `<val_dir>` and
+`<split_out_dir>` unless there's a reason to keep them apart. Treat the
+default as a suggestion, not a requirement; ask if it's genuinely
+unclear, and resolve it once per dataset rather than re-deriving it each
+run.
+
+After the split (or the TSV conversion) finishes, append a line to
+`runs/<run_name>/run_log.txt` (format in `skills/_shared/run_layout.md`)
+noting which tool/ratio/input was used.
 
 ## Anti-Patterns
 

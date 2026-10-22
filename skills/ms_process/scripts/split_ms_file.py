@@ -156,9 +156,10 @@ def main():
         "uses --train-ratio for a plain train/val split instead.",
     )
     ap.add_argument(
-        "--val-file-dir", type=Path, default=Path("Val_File"),
+        "--val-file-dir", type=Path, default=Path("."),
         help="Where to look for an existing <input>_test<ext> file, and "
-        "where to write one if this run creates it (default: Val_File).",
+        "where to write one if this run creates it (default: current "
+        "directory).",
     )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--begin-tag", default=None)

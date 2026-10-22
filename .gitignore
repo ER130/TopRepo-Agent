@@ -1,10 +1,7 @@
-# Runtime data/output folders -- these are per-user research data and
-# generated results, not code. See README.md "Data folder conventions".
-MS_File/
-Val_File/
-Train_result/
-Predict_result/
-TopRepo_Result/
+# Pipeline run outputs -- per-user research data and generated results,
+# not code. One subfolder per dataset/run; each pipeline skill's own
+# SKILL.md documents what goes where inside it.
+runs/
 
 # Files uploaded through the web UI (server.py) -- per-user data, same
 # treatment as the folders above.
