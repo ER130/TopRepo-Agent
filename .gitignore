@@ -36,3 +36,4 @@ venv/
 .env
 .DS_Store
 webui.log
+setup.log

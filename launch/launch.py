@@ -26,6 +26,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = PROJECT_ROOT / ".venv"
 LOG_FILE = PROJECT_ROOT / "webui.log"
+SETUP_LOG_FILE = PROJECT_ROOT / "setup.log"
 HOST = "127.0.0.1"
 PORT = 8000
 
@@ -54,12 +55,17 @@ def ensure_venv() -> None:
         return
     print("First run detected -- setting up a Python virtual environment and")
     print("installing dependencies inside the project folder. This happens")
-    print("once and may take a minute...")
-    subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
-    subprocess.run(
-        [str(venv_python()), "-m", "pip", "install", "-r", str(PROJECT_ROOT / "requirements.txt")],
-        check=True,
-    )
+    print(f"once and may take a minute -- see {SETUP_LOG_FILE} if it fails...")
+    # On Windows, this runs inside a console window that closes itself the
+    # instant the command finishes, success or failure -- too fast to read
+    # anything printed live. Log to a file instead so a failure is still
+    # readable afterward, same reasoning as webui.log for the server itself.
+    with open(SETUP_LOG_FILE, "w", encoding="utf-8") as log:
+        subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True, stdout=log, stderr=subprocess.STDOUT)
+        subprocess.run(
+            [str(venv_python()), "-m", "pip", "install", "-r", str(PROJECT_ROOT / "requirements.txt")],
+            check=True, stdout=log, stderr=subprocess.STDOUT,
+        )
 
 
 def start_server() -> None:
