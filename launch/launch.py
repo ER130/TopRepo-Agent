@@ -25,6 +25,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = PROJECT_ROOT / ".venv"
+LOG_FILE = PROJECT_ROOT / "webui.log"
 HOST = "127.0.0.1"
 PORT = 8000
 
@@ -64,12 +65,17 @@ def ensure_venv() -> None:
 def start_server() -> None:
     print("Starting TopRepo Agent web server -- first launch can take a few")
     print("seconds while the model client and skills load...")
+    # Discarding stdout/stderr here would hide a crash completely -- if
+    # the server dies on startup (bad .env, missing dependency, whatever),
+    # wait_for_port() below just times out with no clue why. A log file
+    # costs nothing and makes that debuggable.
+    log = open(LOG_FILE, "w", encoding="utf-8")
     subprocess.Popen(
         [str(venv_python()), "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", str(PORT)],
         cwd=PROJECT_ROOT,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
         start_new_session=True,
     )
 
@@ -127,6 +133,7 @@ def main() -> None:
         if not wait_for_port():
             print("Server did not come up within 30 seconds -- opening the")
             print("browser anyway; reload the page once it finishes starting.")
+            print(f"If it never comes up, check {LOG_FILE} for the real error.")
     open_browser()
 
 
