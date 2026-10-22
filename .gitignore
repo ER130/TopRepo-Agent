@@ -35,3 +35,4 @@ venv/
 # Misc
 .env
 .DS_Store
+webui.log
