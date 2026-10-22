@@ -101,16 +101,28 @@ def open_browser() -> None:
         # fails to open anything -- confirmed the hard way.
         for args in (["explorer.exe", url], ["wslview", url], ["cmd.exe", "/c", "start", "", url]):
             try:
-                # NOT start_new_session: confirmed on a real machine that
-                # adding it makes explorer.exe get a real PID but open
-                # nothing -- WSL's interop plumbing (WSL_INTEROP env var,
-                # a per-session socket relaying the launch request to the
-                # Windows side) is apparently tied to the session this
-                # script is already running in, and setsid()ing away from
-                # it breaks that relay. Without it, explorer.exe is a
-                # direct child and worked in the same test.
+                # NOT start_new_session (see git history -- that broke it).
+                # Confirmed on a real machine: Popen() returns a real PID
+                # but opens nothing when this whole script is itself a
+                # one-shot `wsl.exe bash -lc "..."` invocation -- the
+                # moment this script exits, bash's command list is done,
+                # so `wsl.exe` tears the whole invocation down, and the
+                # WSL-interop relay for explorer.exe apparently gets cut
+                # off before it finishes handing off to the Windows side.
+                # Running the identical Popen() call interactively (or
+                # having bash exec explorer.exe itself, as its own last
+                # command) both worked -- only this "fire, then the whole
+                # process tree immediately exits" shape failed. Waiting
+                # briefly gives the relay time to finish; explorer.exe
+                # normally exits on its own well within this once it's
+                # handed off to the real browser.
                 proc = subprocess.Popen(args)
-                print(f"open_browser: launched {args!r} (pid {proc.pid})")
+                print(f"open_browser: launched {args!r} (pid {proc.pid}), waiting briefly")
+                try:
+                    proc.wait(timeout=5)
+                    print("open_browser: launcher process exited on its own")
+                except subprocess.TimeoutExpired:
+                    print("open_browser: launcher still running after 5s, proceeding anyway")
                 return
             except FileNotFoundError:
                 print(f"open_browser: {args[0]} not found, trying next")
