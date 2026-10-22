@@ -28,16 +28,20 @@ key from [console.anthropic.com](https://console.anthropic.com/), and set
 python3 code.py
 ```
 
-**Web UI** (a browser chat interface instead of the terminal):
+**Web UI** (a browser chat interface instead of the terminal) -- easiest
+way to start it, per platform:
+- **Windows** (with WSL): double-click `launch/Start TopRepo Agent.vbs`
+- **macOS**: double-click `launch/Start TopRepo Agent.command`
+- **Linux**: run `python3 launch/launch.py`
+
+Each sets up its own `.venv` on first run and opens your browser straight
+to the chat UI. See `launch/README.md` for details.
+
+Or start it manually instead:
 ```
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
-then open `http://localhost:8000/`. Or use the desktop launcher in
-`launch/` instead, which sets everything up (including its own `.venv`)
-and opens the browser for you, no terminal needed: double-click
-`launch/Start TopRepo Agent.vbs` on Windows (WSL) or
-`launch/Start TopRepo Agent.command` on macOS, or run
-`python3 launch/launch.py` on Linux. See `launch/README.md` for details.
+then open `http://localhost:8000/`.
 
 Note: in the web UI, a command the agent judges risky is refused
 automatically rather than prompting you to approve it, unlike the
