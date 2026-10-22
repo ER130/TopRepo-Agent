@@ -28,7 +28,8 @@ if %errorlevel% neq 0 (
     echo once and may take a minute; a console window will show progress.
     start "TopRepo Agent - first-time setup" /wait wsl.exe bash -lc "cd '%WSLDIR%' && python3 launch/launch.py --setup-only"
     if %errorlevel% neq 0 (
-        echo Setup failed -- see the window above for the error, fix it,
+        echo Setup failed -- that window closes itself too fast to read, so
+        echo check setup.log in the project root for the real error, fix it,
         echo then run this again.
         exit /b 1
     )
