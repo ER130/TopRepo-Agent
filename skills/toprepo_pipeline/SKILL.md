@@ -172,13 +172,11 @@ step 1.5 depends on this (see below).
 
 **Resolving `<toprepo_out_dir>`**: don't assume a name -- check whether
 the user already has a location in mind or one already exists for this
-dataset before creating a new one. `runs/<dataset_id>/02_toprepo_pipeline/`
-at the project root is this project's own default when starting fresh --
-`<dataset_id>` doubles as the `<run_name>` the other pipeline skills use,
-since this dataset's output from every stage of the pipeline lives
-together under one `runs/<dataset_id>/` (check there for a
-`01_toppic_suite/` folder already created for this dataset before
-inventing a new one). Treat the default as a suggestion, not a
+dataset before creating a new one. Otherwise this is
+`runs/<dataset_id>/02_toprepo_pipeline/` -- `<dataset_id>` doubles as the
+`<run_name>` the other pipeline skills use; see
+`skills/_shared/run_layout.md` for the full `runs/` layout and the
+`run_log.txt` convention. Treat the default as a suggestion, not a
 requirement -- a local setup may keep things elsewhere. Resolve it once
 and reuse it for the whole run.
 
@@ -187,10 +185,10 @@ ProteomeXchange/MassIVE accession like `PXD029703`) -- **use the exact same
 string in every command below**; it's threaded through as a join key, not
 just a label, and (per above) also names this dataset's `runs/` folder.
 
-When Phase 2 below produces the annotated msalign, append one line to
-`../run_log.txt` (i.e. `runs/<dataset_id>/run_log.txt`, one level up from
-`<toprepo_out_dir>` since every command here runs from inside it) noting
-the date, this skill's name, and the output file.
+When Phase 2 below produces the annotated msalign, append a line to
+`../run_log.txt` (relative to `<toprepo_out_dir>`, since every command
+here runs from inside it -- see `skills/_shared/run_layout.md` for the
+line format).
 
 ### Phase 1 -- merge spectral info into one TSV per dataset
 

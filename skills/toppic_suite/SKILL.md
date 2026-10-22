@@ -327,25 +327,15 @@ consistently for the whole dataset.
 
 **Resolving `<ms_dir>`**: don't assume a name -- check first. If the user
 already has a folder for this dataset (they mentioned a path, or one
-already exists with matching files in it), use that. If you're starting
-fresh and nothing says otherwise, `runs/<run_name>/01_toppic_suite/` at the
-project root is this project's own default (sibling to `skills/`,
-`code.py`) -- `<run_name>` is the same identifier `toprepo_pipeline` calls
-`<dataset_id>` (its own accession, e.g. `PXD029703`, or any stable name
-you'll reuse everywhere), since this dataset's output from every stage of
-the pipeline lives together under one `runs/<run_name>/`. Check `runs/`
-for a folder already matching this dataset before creating a new one.
-Treat the default as a suggestion, not a requirement: a local setup may
-already keep raw MS data somewhere else entirely (a data drive, a folder
-per instrument run, whatever the user's lab already uses). Resolve it
-once (ask if genuinely ambiguous) and reuse the same path for every step
-below, rather than re-deriving or renaming mid-run.
-
-When you create `<ms_dir>` for the first time this run, also append one
-line to `runs/<run_name>/run_log.txt` noting the date, this skill's name,
-and the raw file(s)/key TopFD-TopPIC settings used, e.g.
-`echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  toppic_suite  <summary>" >>
-runs/<run_name>/run_log.txt`.
+already exists with matching files in it), use that. Otherwise this is
+`runs/<run_name>/01_toppic_suite/` -- see `skills/_shared/run_layout.md`
+for what `<run_name>` is, the full `runs/` layout, and the `run_log.txt`
+convention (append a line there when you create `<ms_dir>` for the first
+time this run). Treat the default as a suggestion, not a requirement: a
+local setup may already keep raw MS data somewhere else entirely (a data
+drive, a folder per instrument run, whatever the user's lab already
+uses). Resolve it once (ask if genuinely ambiguous) and reuse the same
+path for every step below, rather than re-deriving or renaming mid-run.
 
 ### 1. msconvert -- raw file to mzML (see Prerequisites' caveat)
 
