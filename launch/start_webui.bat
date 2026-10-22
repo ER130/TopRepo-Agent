@@ -12,7 +12,6 @@ for /f "usebackq delims=" %%P in (`wsl.exe wslpath -a "%HEREDIR%"`) do set "WSLD
 if "%WSLDIR%"=="" (
     echo Could not resolve the WSL path for %HEREDIR%.
     echo Is WSL installed? Try running "wsl.exe wslpath -a ." yourself to check.
-    pause
     exit /b 1
 )
 
@@ -30,11 +29,9 @@ if %errorlevel% neq 0 (
     start "TopRepo Agent - first-time setup" /wait wsl.exe bash -lc "cd '%WSLDIR%' && python3 launch/launch.py --setup-only"
     if %errorlevel% neq 0 (
         echo Setup failed -- see the window above for the error, fix it,
-        echo then double-click this again.
-        pause
+        echo then run this again.
         exit /b 1
     )
 )
 
 wsl.exe bash -lc "cd '%WSLDIR%' && python3 launch/launch.py"
-if %errorlevel% neq 0 pause
