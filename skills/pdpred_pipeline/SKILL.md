@@ -105,13 +105,24 @@ files stay together.
 
 **Resolving `<train_dir>`/`<predict_dir>`**: don't assume a name -- if the
 user already has a place they keep runs (or one already exists for this
-dataset/species), use that. `Train_result/Train_<name>/` and
-`Predict_result/Predict_<name>/` at the project root (e.g. training on
-human data -> `Train_result/Train_human/`) are this project's own default
-when starting fresh, but a suggestion, not a requirement -- ask if
-genuinely unclear. Whatever you land on, `mkdir -p` it once before running
-the corresponding step, and reuse the same path for that run rather than
+dataset/species), use that.
+`runs/<run_name>/04_pdpred_pipeline/train/<name>/` and
+`runs/<run_name>/04_pdpred_pipeline/predict/<name>/` at the project root
+are this project's own default when starting fresh -- `<run_name>` is the
+same identifier `toprepo_pipeline` calls `<dataset_id>`, since this
+dataset's output from every pipeline stage lives together under one
+`runs/<run_name>/`; `<name>` is a free label for this particular
+train/predict attempt (reuse `<run_name>` itself unless you're keeping
+multiple attempts side by side, e.g. different hyperparameters). Treat
+the default as a suggestion, not a requirement -- ask if genuinely
+unclear. Whatever you land on, `mkdir -p` it once before running the
+corresponding step, and reuse the same path for that run rather than
 re-deriving it.
+
+After training or predicting finishes, append one line to
+`runs/<run_name>/run_log.txt` noting the date, this skill's name, which
+step ran, and the key parameters (`--target`, `--max_length`, checkpoint
+used, etc).
 
 ### 1. Convert each split to HDF5
 
