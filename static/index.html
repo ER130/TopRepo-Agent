@@ -33,8 +33,16 @@
     padding: 16px 20px; border-bottom: 1px solid var(--border);
     background: var(--panel); flex-shrink: 0;
   }
+  #headerTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   header h1 { margin: 0; font-size: 17px; font-weight: 600; }
   header p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+  #stopBtn {
+    flex-shrink: 0; padding: 6px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: #fff; color: #b91c1c;
+    font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  #stopBtn:hover { background: #fef2f2; border-color: #fca5a5; }
+  #stopBtn:disabled { color: var(--muted); cursor: not-allowed; }
 
   #log {
     flex: 1; overflow-y: auto; padding: 20px 20px 8px;
@@ -117,8 +125,13 @@
 <body>
 <div id="app">
   <header>
-    <h1>TopRepo Agent</h1>
-    <p>toppic_suite / toprepo_pipeline / ms_process / pdpred_pipeline</p>
+    <div id="headerTop">
+      <div>
+        <h1>TopRepo Agent</h1>
+        <p>toppic_suite / toprepo_pipeline / ms_process / pdpred_pipeline</p>
+      </div>
+      <button id="stopBtn" title="Stops the server process -- not just this tab. Also stops itself after 15 minutes with no open tab.">Stop Server</button>
+    </div>
   </header>
   <div id="log"></div>
   <div id="composer">
@@ -139,6 +152,7 @@ const sendBtn = document.getElementById("sendBtn");
 const attachBtn = document.getElementById("attachBtn");
 const fileInput = document.getElementById("fileInput");
 const uploadNote = document.getElementById("uploadNote");
+const stopBtn = document.getElementById("stopBtn");
 
 const renderedIds = new Set();
 let lastId = 0;
@@ -258,18 +272,35 @@ fileInput.addEventListener("change", async () => {
 
 // Long-poll for anything this client didn't trigger itself (autonomous
 // background-task completions, cron firings) -- same dedup path as
-// everything else, via renderItem's renderedIds check.
+// everything else, via renderItem's renderedIds check. Also what lets
+// the server tell a closed tab from an open-but-idle one: as long as
+// this keeps running, the server sees requests and won't auto-stop.
+let stopped = false;
 async function pollLoop() {
-  while (true) {
+  while (!stopped) {
     try {
       const res = await fetch("/api/history?since=" + lastId + "&wait=25");
       const data = await res.json();
       renderItems(data.items);
     } catch (e) {
+      if (stopped) return;
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
 }
+
+stopBtn.addEventListener("click", async () => {
+  if (!confirm("Stop the TopRepo Agent server? This stops the server process itself, not just this tab -- you'll need to restart it to use the web UI again.")) return;
+  stopBtn.disabled = true;
+  stopBtn.textContent = "Stopping...";
+  stopped = true;
+  try {
+    await fetch("/api/stop", { method: "POST" });
+  } catch (e) {
+    // expected -- the server may already be gone by the time this resolves
+  }
+  document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;font-family:inherit;">Server stopped. You can close this tab.</div>';
+});
 
 loadInitial().then(pollLoop);
 </script>
