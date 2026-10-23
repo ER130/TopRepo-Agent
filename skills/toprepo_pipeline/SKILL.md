@@ -104,10 +104,15 @@ example" isn't a safe answer for any of them:
 - `<dataset_id>` has no default at all -- recommend one from the actual
   data (a ProteomeXchange/MassIVE accession if the dataset has one,
   otherwise a stable name you'll reuse everywhere) and say why, before
-  running anything. Check the `param_precedents` skill for whether this
-  accession is already one of TopRepo's own 87 source datasets -- if so,
-  its published species, instrument, and processing details are already
-  documented there, which is worth surfacing to the user.
+  running anything. If the user hasn't given an accession, don't derive
+  `<dataset_id>` from the filename. First run
+  `python3 skills/param_precedents/scripts/lookup_file.py <mzML>`: a
+  file from TopRepo's corpus resolves to its real accession (e.g.
+  `Tel2_1.mzML` -> `PXD027741`), and that accession is the
+  `<dataset_id>`, with its documented species/instrument/processing
+  shown to the user. Files that resolve to the same accession are one
+  dataset: give them one `<dataset_id>` and one `runs/<dataset_id>/`,
+  not one per file.
 - Step 1.5's 4th argument: check whether this dataset is already in
   TopRepo's own published corpus (look for its msalign filename in the
   shipped `toprepo_file_info_v1.2.1.tsv`) before recommending which file to
