@@ -356,8 +356,7 @@ Skip this step if the input is already mzML/mzXML.
 run the installed binary directly from `<ms_dir>` (or give it an absolute
 path):
 ```
-cd <ms_dir>
-topfd -u <threads> <input>.mzML > topfd_<input>.log 2>&1 &
+cd <ms_dir> && topfd -u <threads> <input>.mzML > topfd_<input>.log 2>&1
 ```
 
 **If you're on the Docker path (Windows, or any other OS),** `-v` needs an
@@ -370,16 +369,22 @@ use the `D:\...` form instead.
 
 ```
 docker run --rm -v <absolute path to ms_dir>:/data toppicsuite/toppic \
-    topfd -u <threads> /data/<input>.mzML > topfd_<input>.log 2>&1 &
+    topfd -u <threads> /data/<input>.mzML > topfd_<input>.log 2>&1
 ```
-Either form: **launch in the background, as shown above, not in the
-foreground.** On a real mzML file this routinely runs past a single
-foreground command's
-timeout (observed: multiple fresh sessions each hit a ~120s timeout running
-this in the foreground first, before separately discovering the background
-form) -- redirect output to a log file, background it with `&`, and poll
-that log (`tail`) or `wait` on the PID rather than blocking on the command
-itself.
+Either form: **run it with the bash tool's `run_in_background: true`,
+exactly as written above -- no trailing `&`, no `nohup`.** A normal bash
+call is killed after 120s, and TopFD on a real mzML file takes minutes.
+`&`/`nohup` doesn't get around that either: the call's whole process
+group is killed the moment it returns. Both mistakes kill TopFD partway
+through and leave partial output behind -- typically just the MS1 part,
+since TopFD finishes MS1 before MS2, plus a half-written `.sqlite`
+(and `.sqlite-shm`). That's what an "MS1-only" result has been every
+time on this project, never the data. With `run_in_background: true`
+there's no time limit; the result arrives as a task notification on a
+later turn, and you can `tail` the log meanwhile. A bash result saying
+`Error: Timeout` means the command was killed: delete its partial
+outputs and re-run it in the background -- don't read meaning into what
+it left.
 
 The underlying command and flags are the same binary this skill already
 verified end to end against a source build (the mzXML test fixture
@@ -401,21 +406,24 @@ one to the flag `--help` actually shows, and leave it at the default
 `--help` doesn't list: a plan once used `topfd -m ... -max_charge 30
 -window 3`, none of which are real.
 
-**"Finished" means the process exited, not that a file appeared.** Check
-the PID (`pgrep -af topfd`, or `docker ps` on the Docker path) or the end
-of `topfd_<input>.log`. Only then check outputs. A run reported as
+**"Finished" means the background task's notification arrived with
+status `completed`, not that a file appeared.** Until then the run is in
+progress; check on it with `tail topfd_<input>.log`. A run reported as
 "only MS1 came out" at ~5% progress was just still running.
 
-**After it exits, check the output set before going on.** All six
+**After it completes, check the output set before going on.** All six
 outputs above should be there, and `<input>_ms2.msalign` must exist and
 hold `LEVEL=2` spectra (`grep -m3 '^LEVEL=' <input>_ms2.msalign`). If
 it's missing, or the output looks different from the list above (for
-example split files like `<input>_ms1.msalign_0` .. `_7`, a `.sqlite`
-database, other names), **stop and show the user** `ls -la <ms_dir>`, the
-last lines of the log, and the first lines of `topfd --help` (the
-version). Don't explain the difference away and carry on. The installed
-binary is likely a different TopFD version from the one this skill was
-verified against, and the next steps depend on these exact files.
+example a bare `<input>.msalign`, split files like `<input>_ms1.msalign_0`
+.. `_7`, a leftover `.sqlite`/`.sqlite-shm`, other names), **stop and show
+the user** `ls -la <ms_dir>`, the last lines of the log, and the first
+line of `topfd --help` (the version). Don't explain the difference away
+and carry on -- and never conclude "the data has no MS/MS" from it.
+Check the input directly instead: `grep -c 'name="ms level" value="2"'
+<input>.mzML` counts its MS2 spectra. The usual cause is a run that was
+killed partway (see above); a different TopFD version than the 1.9.0
+this skill was verified against is the next suspect.
 
 Useful flags (from the real `--help`, not the manual -- see Core
 Philosophy): `-a` activation method (default `FILE`, i.e. read per-spectrum
@@ -430,9 +438,8 @@ visualization. `-o`/`--missing-level-one` if the input has no MS1 spectra
 **Native-build path (Ubuntu/macOS):** run from `<ms_dir>`, where the
 msalign/feature files from step 2 and the FASTA already live:
 ```
-cd <ms_dir>
-toppic -u <threads> -f C57 <database>.fasta <input>_ms2.msalign \
-    > toppic_<input>.log 2>&1 &
+cd <ms_dir> && toppic -u <threads> -f C57 <database>.fasta <input>_ms2.msalign \
+    > toppic_<input>.log 2>&1
 ```
 
 **Docker path (Windows, or any other OS):** the FASTA has to live under
@@ -441,18 +448,13 @@ mount a second `-v` for it) so both paths resolve inside the container:
 ```
 docker run --rm -v <absolute path to ms_dir>:/data toppicsuite/toppic \
     toppic -u <threads> -f C57 /data/<database>.fasta /data/<input>_ms2.msalign \
-    > toppic_<input>.log 2>&1 &
+    > toppic_<input>.log 2>&1
 ```
 
-Either form: **launch in the background, as shown above, not in the
-foreground** -- same reason as TopFD: TopPIC on a real msalign file
-routinely runs past a single foreground command's timeout. Redirect to a
-log file, background it, poll or `wait`, as with TopFD above. Also
-**confirm `<database>.fasta` has
-actually finished writing** before this runs if TopFD just produced the
-msalign/feature pair in the background -- don't launch TopPIC until the
-TopFD background job has actually exited (check `docker ps`/the PID, not
-just that some output file exists).
+Either form: **run it with `run_in_background: true`, no `&`** -- same
+reason as TopFD: TopPIC on a real msalign file takes far longer than the
+120s a normal bash call gets. Don't start it until TopFD's background
+task has completed and passed the output check in step 2.
 
 **The spectrum file is always `<input>_ms2.msalign` -- never
 `<input>_ms1.msalign`.** TopPIC identifies proteoforms by matching
@@ -510,7 +512,8 @@ deconvoluted output.
 | Pattern | Problem | Fix |
 |---|---|---|
 | Copying flag defaults/meanings from `doc/topfd_manual.md` or `doc/toppic_manual.md` | Verified stale against a real HEAD build (see Core Philosophy) -- wrong defaults and at least one flag whose default behavior flipped | Run `topfd --help`/`toppic --help` on the binary you actually built and read from that |
-| Running `topfd`/`toppic` in the foreground on a real (not test-fixture) file | Observed repeatedly, across multiple fresh sessions: a foreground `docker run` hits a ~120s command timeout before the tool finishes, forcing a second attempt | Launch in the background with output redirected to a log file from the start (see steps 2 and 3 above), not as a recovery after the first one times out |
+| Running `topfd`/`toppic` as a normal bash call, or with `&`/`nohup`, on a real (not test-fixture) file | A normal call is killed at 120s, and `&`/`nohup` children are killed with the call's process group when it returns. Either way TopFD dies partway and leaves MS1-only partial output. That's happened on every real file run this way on this project | Use the bash tool's `run_in_background: true` with the plain command (steps 2 and 3), from the start |
+| Concluding "the data has no MS/MS" from TopFD's output | Seen twice on this project, both times on data with plenty of MS2: the output was partial because the run had been killed | Count MS2 in the input itself: `grep -c 'name="ms level" value="2"' <input>.mzML` |
 | Running `topfd`/`toppic` straight from `build/../bin/` without `make install` or a `resources/` symlink | `getResourceDir()` looks next to the executable, then `/usr/share/toppic`; neither exists yet | `make install`, or symlink `skills/toppic_suite/vendor/resources` next to the binaries |
 | Trusting `make install` alone and moving on | Verified: `/usr/local/bin/topfd`/`toppic` have no RPATH (a real bug -- the project's rpath flag targets shared libraries, never applied to these executables), so they fail with `error while loading shared libraries: libonnxruntime.so.1.14.1 ...` (exit 127) even though the build-tree copy worked | Register `/usr/local/lib/toppic` with `ldconfig` (or set `LD_LIBRARY_PATH`) right after every `make install`, as shown in Prerequisites |
 | Editing/regenerating a FASTA in place and re-running `toppic` against it | Verified: the cached `<database>.fasta_idx/` isn't invalidated by a content change -- you silently search the old database | `rm -rf <database>.fasta_idx/` first, or search-and-replace to a new filename |
@@ -524,8 +527,8 @@ deconvoluted output.
 | Trusting the Docker image's TopFD/TopPIC version matches this skill's `--help`-verified flag defaults | The image hasn't been updated in 5+ years; see the staleness note under Prerequisites | Run `--help` inside the container if a flag's behavior seems off, same as the Core Philosophy rule for a source build |
 | Passing the msalign file before the FASTA to `toppic` (`toppic ... <input>_ms2.msalign <database>.fasta`) | The real usage is `toppic [options] database-file-name spectrum-file-name` -- FASTA must be first. This has already happened once on this project, in a session where the command was reconstructed from memory/context rather than read fresh from this file -- TopPIC then either errors immediately or silently tries to parse the wrong file as the database | Before running, check the argument order against step 3's example above (or a fresh `toppic --help`) -- don't trust a remembered or previously-typed version of this command |
 | Running TopPIC on `<input>_ms1.msalign` because no `_ms2.msalign` was produced | MS1 spectra have no fragment ions, so TopPIC runs for hours without erroring and produces meaningless identifications | TopPIC input is always `_ms2.msalign`. If it's missing, go back to TopFD and report to the user |
-| Concluding TopFD skipped or failed a step because an output file isn't there yet | TopFD writes its outputs as it runs. At ~5% progress the MS2 file legitimately doesn't exist | Wait until the process exits (PID/log), then check the full output set |
-| Explaining away TopFD output that doesn't match this skill's list (split `.msalign_N` files, `.sqlite`, missing `_ms2`) and carrying on | Probably a different TopFD version than the one verified here. Everything downstream depends on the exact filenames | Stop, show `ls -la`, the log tail and the `--help` version line, and ask before going on |
+| Concluding TopFD skipped or failed a step because an output file isn't there yet | TopFD writes its outputs as it runs. At ~5% progress the MS2 file legitimately doesn't exist | Wait for the background task to complete, then check the full output set |
+| Explaining away TopFD output that doesn't match this skill's list (bare `.msalign`, split `.msalign_N` files, leftover `.sqlite`, missing `_ms2`) and carrying on | Most likely a killed run; otherwise a different TopFD version. Everything downstream depends on the exact filenames | Stop, show `ls -la`, the log tail and the `--help` version line, and ask before going on |
 | Writing TopFD/TopPIC flags from memory or from the corpus parameter list (`-max_charge 30`, `-window 3`, `toppic -d ... -s ... -e`) | Those aren't the real CLI. Unknown flags error out or get misread | Map each value to a flag that `--help` actually lists; leave it at the default (and say so) if there isn't one |
 | Picking `-f` by comparing same-species projects when the input file is itself in TopRepo's corpus | Another project's sample prep isn't this data's. `Tel2_1.mzML` is PXD027741's own file (`-f` none), but C57 got picked from PXD017265 | Run `param_precedents/scripts/lookup_file.py` on the input first. A hit decides `-f` |
 | Reporting a running job as complete | The user stops checking on, and stops correcting, a job that's still in progress | State running/finished/failed with evidence (see "Reporting back") |
