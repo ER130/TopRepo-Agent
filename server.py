@@ -123,6 +123,11 @@ def _trigger_shutdown(delay: float = 0.5) -> None:
 def _idle_watchdog() -> None:
     while True:
         time.sleep(60)
+        # A closed tab with TopFD/TopPIC/training still running in the
+        # background isn't "idle": shutting down here would kill the job.
+        if agent_core.work_in_progress():
+            _touch_activity()
+            continue
         with _activity_lock:
             idle_for = time.time() - _last_activity
         if idle_for >= IDLE_TIMEOUT_SECONDS:

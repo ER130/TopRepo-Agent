@@ -1418,10 +1418,16 @@ atexit.register(_stop_all_shell_processes)
 signal.signal(signal.SIGTERM, _handle_termination_signal)
 
 
-def _run_bash_process(command: str, cwd: Path | None = None) -> tuple[str, int | None]:
+FOREGROUND_TIMEOUT = 120
+
+
+def _run_bash_process(command: str, cwd: Path | None = None,
+                      timeout: float | None = FOREGROUND_TIMEOUT) -> tuple[str, int | None]:
     """Run a command in its own process group so it can be tracked and killed
     independently of the shell that spawned it (needed once bash calls can
-    run unattended in a background thread)."""
+    run unattended in a background thread). The whole group is killed when
+    the call returns, so a `cmd &` started inside it does not survive --
+    long jobs need timeout=None (run_in_background), not `&`."""
     process = None
     try:
         process = subprocess.Popen(
@@ -1431,11 +1437,13 @@ def _run_bash_process(command: str, cwd: Path | None = None) -> tuple[str, int |
         )
         with _shell_process_lock:
             _shell_processes.add(process)
-        stdout, stderr = process.communicate(timeout=120)
+        stdout, stderr = process.communicate(timeout=timeout)
         output = (stdout + stderr).strip()
         return (output[:50000] if output else "(no output)"), process.returncode
     except subprocess.TimeoutExpired:
-        return "Error: Timeout (120s)", None
+        return (f"Error: Timeout ({timeout:g}s) -- the command was killed before "
+                "it finished, so any output files it was writing are incomplete. "
+                "Re-run it with run_in_background: true."), None
     except OSError as e:
         return f"Error: {type(e).__name__}: {e}", None
     finally:
@@ -1451,7 +1459,8 @@ def _run_bash_process(command: str, cwd: Path | None = None) -> tuple[str, int |
 
 def run_bash(command: str, run_in_background: bool = False,
              cwd: Path | None = None) -> str:
-    output, _exit_code = _run_bash_process(command, cwd)
+    timeout = None if run_in_background else FOREGROUND_TIMEOUT
+    output, _exit_code = _run_bash_process(command, cwd, timeout)
     return output
 
 
@@ -1632,7 +1641,7 @@ class BackgroundManager:
 
     def _run(self, task_id: str, command: str, cwd: Path | None = None):
         try:
-            output, exit_code = _run_bash_process(command, cwd)
+            output, exit_code = _run_bash_process(command, cwd, timeout=None)
             status = "completed" if exit_code == 0 else "failed"
         except Exception as e:
             output = f"Error: {type(e).__name__}: {e}"
@@ -1645,6 +1654,10 @@ class BackgroundManager:
             task["status"] = status
             self.results[task_id] = output
             self._ready.append(task_id)
+
+    def has_running(self) -> bool:
+        with self._lock:
+            return any(t["status"] == "running" for t in self.tasks.values())
 
     def collect(self) -> list[str]:
         with self._lock:
@@ -2388,9 +2401,11 @@ class TeammateRuntime:
         except (FileNotFoundError, ValueError) as e:
             return None, f"Error: Invalid task assignment: {e}"
 
-    def bash(self, command: str) -> str:
+    def bash(self, command: str, run_in_background: bool = False) -> str:
+        # A teammate already runs on its own thread, so a long command just
+        # blocks this teammate (not the Lead) until it finishes.
         cwd, error = self.current_cwd()
-        return error or run_bash(command, cwd=cwd)
+        return error or run_bash(command, run_in_background, cwd=cwd)
 
     def read(self, path: str, limit: int | None = None) -> str:
         cwd, error = self.current_cwd()
@@ -2656,9 +2671,11 @@ def run_create_worktree(name: str, task_id: str) -> str:
 
 
 BASE_TOOLS = [
-    {"name": "bash", "description": "Run a shell command. Set run_in_background "
-     "to true for a long, independent command; it runs in the background and "
-     "its result is collected on a later turn instead of blocking this one.",
+    {"name": "bash", "description": "Run a shell command. A normal call is killed "
+     "after 120s. For anything that may take longer (TopFD, TopPIC, training), "
+     "set run_in_background to true: it then has no time limit, and its result "
+     "is collected on a later turn. Don't use `cmd &` or nohup instead -- the "
+     "call's whole process group is killed when it returns.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}, "run_in_background": {"type": "boolean"}}, "required": ["command"]}},
     {"name": "read_file", "description": "Read file contents.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
@@ -2707,8 +2724,12 @@ CRON_TOOLS = [
      "input_schema": {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}},
 ]
 TEAMMATE_TOOLS = [
-    {"name": "bash", "description": "Run a shell command in the Task's working directory.",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+    {"name": "bash", "description": "Run a shell command in the Task's working "
+     "directory. A normal call is killed after 120s. For anything that may take "
+     "longer (TopFD, TopPIC, training), set run_in_background to true: no time "
+     "limit, and this call waits until it finishes. Don't use `cmd &` or nohup "
+     "instead -- the call's whole process group is killed when it returns.",
+     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}, "run_in_background": {"type": "boolean"}}, "required": ["command"]}},
     {"name": "read_file", "description": "Read file contents.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
     {"name": "write_file", "description": "Write content to a file.",
@@ -3341,6 +3362,15 @@ runtime_started = False
 runtime_lock = threading.Lock()
 agent_lock = threading.Lock()
 session_history: list = []
+
+
+def work_in_progress() -> bool:
+    """True while a turn, a background command, or a teammate is still
+    working -- what an idle auto-shutdown must not interrupt."""
+    if agent_lock.locked() or BACKGROUND.has_running():
+        return True
+    with team_lock:
+        return any(state == "working" for state in active_teammates.values())
 
 
 def cron_scheduler_loop(stop_event: threading.Event = RUNTIME_STOP):

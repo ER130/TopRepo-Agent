@@ -98,6 +98,13 @@ continuing.
 
 ## Pipeline
 
+**Run every step below with the bash tool's `run_in_background: true`.**
+A normal bash call is killed after 120s, which training always exceeds
+and HDF5 conversion or prediction on a real dataset usually does. Don't
+add `&` or `nohup` -- the call's process group is killed when it returns.
+If a result says `Error: Timeout`, the step died partway: its output
+file is incomplete, so re-run it in the background rather than using it.
+
 Give training and prediction runs their own folders, referred to below as
 `<train_dir>` and `<predict_dir>` -- point each step's `--out`/`--output`
 and log redirect at them, so a run's model, log, and any per-run side
@@ -230,7 +237,7 @@ above.
 | Assuming "just evaluate this checkpoint on this val set" has a dedicated script | It doesn't -- validation is built into `train_td_pred.py`'s training loop, there's no standalone eval mode | Say so rather than guessing; offer to write a thin eval-only script (reusing the validation-phase logic already in `train_td_pred.py`) if the user wants one |
 | Assuming "run the pipeline" means all 3 steps | The user may only want one step (e.g. just predict with an existing checkpoint) | Confirm which step(s) before running anything |
 | Copying scripts elsewhere, or `cd`-ing into a different directory first | All scripts use flat sibling imports (e.g. `import model_data as md`) that rely on Python adding the invoked script's own directory to `sys.path` | Always invoke by full path under `skills/pdpred_pipeline/scripts/` |
-| Launching a full training run without warning the user | Can take hours; blocks the loop if run in the foreground | Confirm epoch count/expected runtime first, run in the background |
+| Launching a full training run without warning the user | Can take hours, and a normal bash call is killed at 120s | Confirm epoch count/expected runtime first, then run it with `run_in_background: true` (not `&`) |
 | Running step 1 on a new species/dataset without checking sequence lengths | `encode_spectrum`/`spectrum_anno` raise `IndexError` and abort partway through the file if any `DATABASE_SEQUENCE` is longer than `--max_length` -- you lose the whole run, not just that one spectrum | Check the input's longest `DATABASE_SEQUENCE` against `--max_length` before running, or raise `--max_length` to cover it |
 | Writing a checkpoint/log/prediction straight to the project root or scattering runs across ad-hoc paths | Runs from different datasets/species pile up ungrouped -- hard to find or compare later | Resolve `<train_dir>`/`<predict_dir>` once per run (see Pipeline above), `mkdir -p` it first, and point `--out`/`--output` and the log `tee` at it |
 | Restating `--max_length`/`--target`'s script default in the plan without checking the actual input or what the checkpoint is for | A restated default isn't a recommendation; a wrong `--target` in particular only surfaces as a shape mismatch much later, after a training run already happened | Check the input's longest `DATABASE_SEQUENCE` and the checkpoint's intended use first, recommend accordingly, flag when it differs from the default |
