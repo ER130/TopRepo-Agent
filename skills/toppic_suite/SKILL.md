@@ -106,9 +106,14 @@ default, and just as explicitly say "the default is right here, because
   its default (reads activation per-spectrum from the input).
 - `-f` on TopPIC has no default -- this isn't a keep-or-change question,
   it's a real decision to make from the sample prep (standard
-  iodoacetamide alkylation -> C57; iodoacetic acid -> C58). Check the
-  `param_precedents` skill for a matching species/instrument/method
-  before asking -- if a close precedent exists, lead with it (e.g.
+  iodoacetamide alkylation -> C57; iodoacetic acid -> C58). First run
+  `python3 skills/param_precedents/scripts/lookup_file.py <input file>`:
+  if the input is one of TopRepo's own files, its subdataset's
+  `toppic_fixed_mod` is the answer for this exact data -- use it, cite
+  the accession, and don't re-weigh it against other projects of the
+  same species (see `param_precedents`, "How to Look Up a Precedent").
+  Only if that finds nothing, check `param_precedents` for a matching
+  species/instrument/method before asking -- if a close precedent exists, lead with it (e.g.
   "TopRepo's comparable E. coli datasets mostly used no fixed
   modification unless alkylated -- was yours?") rather than a blind
   yes/no question. Only about 19% of that corpus is alkylated, so a
@@ -388,6 +393,30 @@ written into `/data` inside the container and so landing directly in
 fields (`FILE_NAME`, `SCANS`, `ACTIVATION`, `PRECURSOR_CHARGE`, ...) match
 exactly what `toprepo_pipeline`'s Phase 1 extraction scripts expect.
 
+**Build the command from `topfd --help`, not from memory or the corpus
+parameter table.** `param_precedents` lists TopRepo's corpus values (max
+charge 30, max mass 70,000 Da, ...) as numbers, not flag names. Map each
+one to the flag `--help` actually shows, and leave it at the default
+(saying so) if you can't find a matching flag. Never write flags that
+`--help` doesn't list: a plan once used `topfd -m ... -max_charge 30
+-window 3`, none of which are real.
+
+**"Finished" means the process exited, not that a file appeared.** Check
+the PID (`pgrep -af topfd`, or `docker ps` on the Docker path) or the end
+of `topfd_<input>.log`. Only then check outputs. A run reported as
+"only MS1 came out" at ~5% progress was just still running.
+
+**After it exits, check the output set before going on.** All six
+outputs above should be there, and `<input>_ms2.msalign` must exist and
+hold `LEVEL=2` spectra (`grep -m3 '^LEVEL=' <input>_ms2.msalign`). If
+it's missing, or the output looks different from the list above (for
+example split files like `<input>_ms1.msalign_0` .. `_7`, a `.sqlite`
+database, other names), **stop and show the user** `ls -la <ms_dir>`, the
+last lines of the log, and the first lines of `topfd --help` (the
+version). Don't explain the difference away and carry on. The installed
+binary is likely a different TopFD version from the one this skill was
+verified against, and the next steps depend on these exact files.
+
 Useful flags (from the real `--help`, not the manual -- see Core
 Philosophy): `-a` activation method (default `FILE`, i.e. read per-spectrum
 from the input -- don't override this unless the input genuinely lacks
@@ -425,6 +454,17 @@ msalign/feature pair in the background -- don't launch TopPIC until the
 TopFD background job has actually exited (check `docker ps`/the PID, not
 just that some output file exists).
 
+**The spectrum file is always `<input>_ms2.msalign` -- never
+`<input>_ms1.msalign`.** TopPIC identifies proteoforms by matching
+fragment ions, and only MS/MS (`LEVEL=2`) spectra have them. MS1
+spectra hold precursor masses only. TopPIC will run on an MS1 file
+without erroring and spend hours producing meaningless results. That
+happened once: with no `_ms2.msalign` produced, an agent decided
+"LEVEL=1 is the expected input for TopPIC" and started a 32-48 hour
+batch on eight `_ms1.msalign_N` files. If there's no `_ms2.msalign`, go
+back to TopFD (see the output check in step 2) and tell the user.
+Don't substitute.
+
 **Argument order: the FASTA always comes first, the msalign file second --
 `toppic [options] database-file-name spectrum-file-name`, confirmed from
 `toppic --help`'s own usage line. Reversing these has already happened once
@@ -455,6 +495,16 @@ and re-running `toppic` silently reused the stale index (unchanged
 timestamps) rather than rebuilding it. Delete `<database>.fasta_idx/`
 whenever the FASTA content changes, or use a new filename.
 
+## Reporting back
+
+Give each step's real state in one word -- **running**, **finished**, or
+**failed** -- plus the evidence (PID alive, log tail, files and sizes).
+A test run on one file isn't the batch: say "test run on 1 of 8 files,
+~60% done; full batch not started, ~32-48 h estimated", never a
+"Complete ✅" heading over work that's still running. Use the terms
+correctly: mzML is undeconvoluted input, and msalign is TopFD's
+deconvoluted output.
+
 ## Anti-Patterns
 
 | Pattern | Problem | Fix |
@@ -473,6 +523,12 @@ whenever the FASTA content changes, or use a new filename.
 | Attempting a native Windows build via `vendor/doc/windows_build.md` (MSYS2) because Docker isn't installed yet | This skill specifically routes Windows to Docker; the Windows build path exists upstream but is undocumented/unverified by this skill | Send the user to install Docker instead, wait for confirmation, re-check `docker info` |
 | Trusting the Docker image's TopFD/TopPIC version matches this skill's `--help`-verified flag defaults | The image hasn't been updated in 5+ years; see the staleness note under Prerequisites | Run `--help` inside the container if a flag's behavior seems off, same as the Core Philosophy rule for a source build |
 | Passing the msalign file before the FASTA to `toppic` (`toppic ... <input>_ms2.msalign <database>.fasta`) | The real usage is `toppic [options] database-file-name spectrum-file-name` -- FASTA must be first. This has already happened once on this project, in a session where the command was reconstructed from memory/context rather than read fresh from this file -- TopPIC then either errors immediately or silently tries to parse the wrong file as the database | Before running, check the argument order against step 3's example above (or a fresh `toppic --help`) -- don't trust a remembered or previously-typed version of this command |
+| Running TopPIC on `<input>_ms1.msalign` because no `_ms2.msalign` was produced | MS1 spectra have no fragment ions, so TopPIC runs for hours without erroring and produces meaningless identifications | TopPIC input is always `_ms2.msalign`. If it's missing, go back to TopFD and report to the user |
+| Concluding TopFD skipped or failed a step because an output file isn't there yet | TopFD writes its outputs as it runs. At ~5% progress the MS2 file legitimately doesn't exist | Wait until the process exits (PID/log), then check the full output set |
+| Explaining away TopFD output that doesn't match this skill's list (split `.msalign_N` files, `.sqlite`, missing `_ms2`) and carrying on | Probably a different TopFD version than the one verified here. Everything downstream depends on the exact filenames | Stop, show `ls -la`, the log tail and the `--help` version line, and ask before going on |
+| Writing TopFD/TopPIC flags from memory or from the corpus parameter list (`-max_charge 30`, `-window 3`, `toppic -d ... -s ... -e`) | Those aren't the real CLI. Unknown flags error out or get misread | Map each value to a flag that `--help` actually lists; leave it at the default (and say so) if there isn't one |
+| Picking `-f` by comparing same-species projects when the input file is itself in TopRepo's corpus | Another project's sample prep isn't this data's. `Tel2_1.mzML` is PXD027741's own file (`-f` none), but C57 got picked from PXD017265 | Run `param_precedents/scripts/lookup_file.py` on the input first. A hit decides `-f` |
+| Reporting a running job as complete | The user stops checking on, and stops correcting, a job that's still in progress | State running/finished/failed with evidence (see "Reporting back") |
 | Copying a flag's default straight into the Mode B plan without reasoning about whether it fits this run (e.g. leaving `-u` at 1, or picking `-f` without checking the sample prep) | A restated default isn't a recommendation -- defeats the point of Mode B, and for a no-default flag like `-f` it means silently guessing | Check the actual context first (core count, sample prep, presence of a `.feature` file) and state a recommended value with a reason, flagging when it differs from the default |
 
 ## Resources

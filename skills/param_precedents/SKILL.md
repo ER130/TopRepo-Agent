@@ -60,10 +60,34 @@ don't stretch a thin match into a confident recommendation.
 
 ## How to Look Up a Precedent
 
-The data lives in `resources/toprepo_datasets_phase1.tsv` -- one row per
-subdataset (112 rows, 38 projects). Filter or grep it by `species`,
-`sample`, or `instrument` for the closest match to what's being
-processed. Columns that actually matter for a parameter decision:
+**Step 1 -- check whether the input file itself is from the corpus.** Do
+this before any species/instrument matching, every time you have a
+filename (raw, mzML, msalign, uploaded or not):
+```
+python3 skills/param_precedents/scripts/lookup_file.py <input file> [<more files>]
+```
+It strips web-upload prefixes (`3702dbb7_`) and `_ms1`/`_ms2` suffixes,
+looks the name up in `toprepo_pipeline`'s shipped
+`toprepo_file_info_v1.2.1.tsv` (every mzML in the corpus, with its
+accession and subdataset), and prints that subdataset's row from the
+table below. **A hit is the answer, not a precedent:** it's the same
+data, so use that subdataset's `toppic_fixed_mod`, `dissociation_meta`
+and `faims_meta` directly, and cite its accession as the dataset's
+`<dataset_id>`. Never weigh it against other projects with the same
+species/instrument -- they're a different lab's sample prep. (This
+happened: `Tel2_1.mzML` is PXD027741's own file, `toppic_fixed_mod`
+`none`, but an agent that skipped this step compared PXD027741 against
+PXD017265 as two equal "zebrafish brain, Q Exactive HF" precedents and
+picked C57 from the wrong one.) If the script says AMBIGUOUS (a few
+generic names like `F4_1` exist in more than one dataset, sometimes with
+different `-f` values), ask the user which dataset it came from rather
+than picking one.
+
+**Step 2 -- only if step 1 found nothing:** the data lives in
+`resources/toprepo_datasets_phase1.tsv` -- one row per subdataset (112
+rows, 38 projects). Filter or grep it by `species`, `sample`, or
+`instrument` for the closest match to what's being processed. Columns
+that actually matter for a parameter decision:
 
 - **`toppic_fixed_mod`** -- already resolved to the exact value to use:
   `none (no -f)`, `C57 (carbamidomethyl Cys)`, or `MIXED - set per raw
@@ -153,6 +177,8 @@ methods, alkylation included, as an experimental variable.
 
 | Pattern | Problem | Fix |
 |---|---|---|
+| Matching on species/instrument before checking whether the input file itself is in the corpus | A same-species row is someone else's sample prep; the file's own subdataset is the actual answer. Two zebrafish brain projects in the corpus disagree on `-f` | Run `scripts/lookup_file.py` on the input filename first; use species matching only when it finds nothing |
+| Searching the table for the literal filename or a filename-derived `<dataset_id>` | The table is per subdataset; it has no filenames, so a literal search always misses and the data looks "new" when it isn't | Use `scripts/lookup_file.py`, which goes through the per-file index |
 | Defaulting `-f` to C57 because it's the well-known/common choice | Only ~19% of this corpus's files used it -- it's the minority, not a safe default | Ask whether the sample was alkylated; use a precedent only as a fallback, and say so explicitly |
 | Treating this skill as a source of per-dataset TopFD/TopPIC numeric tuning | Almost the entire corpus shares one parameter set -- only `-f`/dissociation/separation/FAIMS genuinely vary | Read "What's Corpus-Wide, Not Per-Dataset" before citing a row as if every field were dataset-specific |
 | Citing `dissociation_S5` without checking `dissociation_meta` | The two disagree for project 25, and S5 is the one that's wrong there | Trust `dissociation_meta` where they differ |
@@ -162,6 +188,10 @@ methods, alkylation included, as an experimental variable.
 
 ## Resources
 
+- `scripts/lookup_file.py` -- step 1 of the lookup: input filename ->
+  accession/subdataset -> that subdataset's row below. Reads
+  `toprepo_pipeline`'s shipped `toprepo_file_info_v1.2.1.tsv` (4,615
+  msalign/mzML pairs) rather than keeping a second copy here.
 - `resources/toprepo_datasets_phase1.tsv` -- the lookup table, 112 rows
   (one per subdataset), columns described above.
 - `resources/toprepo_datasets_phase1.md` -- the full research write-up:
