@@ -19,7 +19,7 @@ description: |
       for TD-Pred
   Keywords: TopRepo, TopFD, TopPIC, PrSM, mzML, msalign, feature file,
   dataset ID, annotated msalign, annotated mgf, spectral repository,
-  proteoform, msconvert
+  proteoform
 ---
 
 # TopRepo Pipeline
@@ -62,11 +62,11 @@ patch in place.
   annotated-mgf outputs, or mentions the ion-frequency/coverage-rate
   annotation step
 
-**Not this skill**: `msconvert` (raw -> mzML), TopFD (mzML -> msalign +
-`.feature`), and TopPIC (msalign -> PrSM identification TSV) are separate
-compiled tools from the same toppic-suite family, covered by the
-`toppic_suite` skill. TopRepo -- and this skill -- start **after** those
-three have already produced their output; it does not run them. If the
+**Not this skill**: `msconvert` (raw -> mzML, the `msconvert` skill),
+TopFD (mzML -> msalign + `.feature`) and TopPIC (msalign -> PrSM
+identification TSV, both the `toppic_suite` skill). TopRepo -- and this
+skill -- start **after** those three have already produced their output;
+it does not run them. If the
 user doesn't have mzML + msalign + `.feature` + TopPIC PrSM TSV yet, use
 `toppic_suite` first rather than guessing at how to invoke TopFD/TopPIC here.
 
@@ -374,7 +374,8 @@ for the exact commit, and Prerequisites for how to update it):
   not part of it -- see Core Philosophy for why that distinction matters
 
 **Related skills**:
-- `toppic_suite` -- the step *before* this one: msconvert -> TopFD -> TopPIC,
+- `msconvert`, then `toppic_suite` -- the steps *before* this one: raw ->
+  mzML, then TopFD -> TopPIC,
   producing the mzML/msalign/`.feature`/PrSM-TSV files this skill's Phase 1
   merges together
 - `ms_process` -- takes over from this skill's Phase 2 output: splitting

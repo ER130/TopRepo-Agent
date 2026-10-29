@@ -4,23 +4,23 @@ description: |
   Run the raw-data-to-identification chain that sits upstream of
   toprepo_pipeline -- by default compiling locally on Ubuntu/macOS, per
   toppic-suite's own build instructions, or through the official
-  `toppicsuite/toppic` Docker image on Windows or any other OS: msconvert (vendor raw file -> mzML, a
-  separate ProteoWizard tool), TopFD (mzML -> deconvoluted msalign + LC-MS
+  `toppicsuite/toppic` Docker image on Windows or any other OS: TopFD
+  (centroided mzML -> deconvoluted msalign + LC-MS
   feature files, from https://github.com/toppic-suite/toppic-suite), and
   TopPIC (msalign + feature + FASTA -> PrSM identification TSV, same repo).
   Use when users:
   (1) ask to build, install, compile, or run TopFD, TopPIC, or "toppic-suite"
-  (2) have a raw vendor MS file (.raw/.d/etc.) or a centroided mzML/mzXML
-      file and want it deconvoluted and/or searched against a protein
-      database, rather than already having TopFD/TopPIC output
+  (2) have a centroided mzML/mzXML file (from a raw file: run the
+      msconvert skill first) and want it deconvoluted and/or searched
+      against a protein database
   (3) ask what topfd/toppic flags do, or hit a build error for this repo
   (4) mention PrSM, proteoform identification, spectral deconvolution,
-      isotopic envelope, or msconvert while preparing data for TopRepo/TD-Pred
-  Keywords: msconvert, ProteoWizard, TopFD, TopPIC, toppic-suite, deconvolution,
+      isotopic envelope while preparing data for TopRepo/TD-Pred
+  Keywords: TopFD, TopPIC, toppic-suite, deconvolution,
   isotopic envelope, feature detection, PrSM, FASTA search, EnvCNN, MIScore
 ---
 
-# TopPIC Suite (msconvert -> TopFD -> TopPIC)
+# TopPIC Suite (TopFD -> TopPIC)
 
 ## The Core Philosophy
 
@@ -45,15 +45,15 @@ but it's still frozen at the commit in `vendor/VENDORED_COMMIT.txt`, not
 ours to modify; fix problems from this skill's own layer, not by
 hand-editing anything under `vendor/`.
 
-**msconvert is a different project** (ProteoWizard, not toppic-suite),
-and this skill supports it **on Windows (WSL) only for now** -- see step 1.
-Its scripts were tested against a stand-in for `msconvert.exe`, not the
-real program, so report exactly what happens on the first real run.
+**Raw vendor files (.raw/.d) aren't this skill's job**: load the
+`msconvert` skill first -- it converts them to centroided mzML and checks
+the result. Start here once you have that mzML.
 
 ## When to Use This
 
-- The user has raw vendor files or mzML/mzXML that hasn't been through
-  TopFD/TopPIC yet -- this is the step **before** `toprepo_pipeline`
+- The user has mzML/mzXML that hasn't been through TopFD/TopPIC yet --
+  this is the step **before** `toprepo_pipeline` (raw files: `msconvert`
+  skill first)
 - The user wants to build/install TopFD or TopPIC, or asks what a flag does
 - The user already has TopFD `.msalign`/`.feature` output and a FASTA, and
   wants proteoform identification (PrSM) results
@@ -309,11 +309,8 @@ resource directory ... does not exist!`. `make install` handles this for
 you; skip it only if you symlink or copy `resources/` next to wherever you
 run `topfd`/`toppic` from.
 
-**msconvert (Windows/WSL only)**: raw vendor files (Thermo `.raw`,
-Bruker `.d`, etc.) need msconvert from ProteoWizard, not toppic-suite, to
-become mzML. Its vendor readers are Windows-only, so this skill uses the
-user's own Windows install of ProteoWizard, called from WSL -- see step 1.
-If the user already has mzML/mzXML, skip it and start at TopFD below.
+**Raw vendor files** (Thermo `.raw`, Bruker `.d`, etc.) are converted to
+centroided mzML by the `msconvert` skill, not here.
 
 ## Pipeline
 
@@ -334,48 +331,11 @@ drive, a folder per instrument run, whatever the user's lab already
 uses). Resolve it once (ask if genuinely ambiguous) and reuse the same
 path for every step below, rather than re-deriving or renaming mid-run.
 
-### 1. msconvert -- raw file to centroided mzML (Windows/WSL only)
+### 1. Input mzML
 
-Skip this step if the input is already mzML/mzXML -- but still run the
-check at the end of it on an mzML the user gives you.
-
-**Find msconvert first:**
-```
-bash skills/toppic_suite/scripts/find_msconvert.sh
-```
-- Prints a path, exit 0: ProteoWizard is installed -- convert below.
-- Exit 1 (`NOT_FOUND`): stop and tell the user to install ProteoWizard
-  (Windows 64-bit) from https://proteowizard.sourceforge.io/download.html,
-  then wait for them to say it's done and re-run the script. **Don't
-  download or install it yourself**: the installer asks the user to accept
-  the instrument vendors' licenses. If they say it's installed somewhere
-  else, re-run with `MSCONVERT=/mnt/<drive>/.../msconvert.exe`.
-- Exit 2 (`NOT_WSL`): this isn't a Windows machine. Mac/Linux aren't
-  supported yet -- ask the user to convert on a Windows PC with
-  MSConvertGUI (Peak Picking filter, algorithm vendor, MS levels 1-) and
-  give you the mzML.
-
-**Convert** -- with `run_in_background: true`, one raw file per call, one
-after another:
-```
-bash skills/toppic_suite/scripts/run_msconvert.sh <input>.raw <ms_dir>
-```
-It runs `msconvert.exe` with `--mzML --filter "peakPicking vendor
-msLevel=1-"` (centroiding is required: TopFD does poorly on profile
-data, and `peakPicking` must be the first filter), writes
-`<ms_dir>/<input>.mzML`, then runs the check below. Keep the raw file and
-`<ms_dir>` on a Windows drive (`/mnt/c/...`, `/mnt/d/...`): `msconvert.exe`
-is a Windows program and may not read or write inside WSL's own
-filesystem. The script warns if either isn't.
-
-**Check the mzML** (the script does this itself; run it by hand on an
-mzML the user supplied):
-```
-bash skills/toppic_suite/scripts/check_mzml.sh <ms_dir>/<input>.mzML
-```
-Exit 0 `OK` -> go on to TopFD. Exit 3 `PROFILE` -> it wasn't centroided;
-re-convert (or ask the user to, with Peak Picking added). Exit 4 `NO_MS2`
--> no MS2 spectra at all; stop and show the user before going on.
+Raw vendor files: run the `msconvert` skill first. An mzML the user gave
+you: run `bash skills/msconvert/scripts/check_mzml.sh <input>.mzML`
+before TopFD -- it must report `OK` (centroided, has MS2).
 
 ### 2. TopFD -- deconvolute mzML/mzXML to msalign + feature files
 
@@ -545,8 +505,6 @@ deconvoluted output.
 | Trusting `make install` alone and moving on | Verified: `/usr/local/bin/topfd`/`toppic` have no RPATH (a real bug -- the project's rpath flag targets shared libraries, never applied to these executables), so they fail with `error while loading shared libraries: libonnxruntime.so.1.14.1 ...` (exit 127) even though the build-tree copy worked | Register `/usr/local/lib/toppic` with `ldconfig` (or set `LD_LIBRARY_PATH`) right after every `make install`, as shown in Prerequisites |
 | Editing/regenerating a FASTA in place and re-running `toppic` against it | Verified: the cached `<database>.fasta_idx/` isn't invalidated by a content change -- you silently search the old database | `rm -rf <database>.fasta_idx/` first, or search-and-replace to a new filename |
 | Building the full `make install` (all six tools + six GUIs) when only TopFD/TopPIC are needed | Qt GUI compilation is the slow part and buys nothing for a command-line skill | `make -j$(nproc) topfd toppic` (add other console tools by name only if asked) |
-| Running `msconvert` without `--filter "peakPicking vendor msLevel=1-"`, or writing the msconvert command by hand | Produces profile mzML, which TopFD deconvolutes poorly | Use `scripts/run_msconvert.sh`; check any user-supplied mzML with `scripts/check_mzml.sh` |
-| Downloading or installing ProteoWizard for the user when `find_msconvert.sh` finds nothing | The installer requires the user to accept the vendors' licenses | Give them the download link and wait |
 | Treating TopFD/TopPIC's own "16 GB memory" note as boilerplate | It's the vendor's stated minimum for real LC-MS runs, not a formality | Check available memory before a large job, flag it to the user if short |
 | Leaving `-u`/`--thread-number` at its default of 1 on a multi-core machine | Both tools default to single-threaded; real datasets are far slower than the ~4.5s/~2s smoke tests here | Pass `-u <nproc>` explicitly, as shown above |
 | Passing a relative path to `docker run -v` | Docker requires an absolute host path for a bind mount; a relative one fails or silently mounts the wrong thing rather than erroring clearly | Resolve `<ms_dir>` to an absolute path first (`$(pwd)/<ms_dir>`, or the native `D:\...` form on Windows PowerShell) |
@@ -580,20 +538,14 @@ tooling, unused by the CLI path this skill covers):
 - `vendor/tests/data/mzxml_test.mzXML`, `mzxml_test_no_ms1.mzXML` -- real
   bundled fixtures, good for a quick smoke test of a fresh build
 
-**Scripts** (`skills/toppic_suite/scripts/`, Windows/WSL msconvert step):
-- `find_msconvert.sh` -- finds the user's Windows `msconvert.exe`
-- `run_msconvert.sh` -- raw -> centroided mzML, then checks it
-- `check_mzml.sh` -- counts MS1/MS2 and centroid/profile spectra in an mzML
-
 **Not vendored** -- genuinely external:
-- ProteoWizard (`https://proteowizard.sourceforge.io`) -- msconvert itself,
-  a separate project the user installs on Windows (step 1)
 - `toppicsuite/toppic` on Docker Hub -- the image this skill runs TopFD/TopPIC
   through on Windows or any other non-Ubuntu/macOS system; pulled on
   demand (Prerequisites, Docker Step 2), not vendored or rebuilt by this
   project
 
 **Related skills**:
+- `msconvert` -- the step before: raw vendor files -> centroided mzML
 - `toprepo_pipeline` -- the next step: turns this skill's mzML + msalign +
   feature + PrSM-TSV output into TopRepo's merged/annotated files
 - `ms_process`, `pdpred_pipeline` -- further downstream, unchanged by this skill
