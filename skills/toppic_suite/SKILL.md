@@ -333,9 +333,10 @@ path for every step below, rather than re-deriving or renaming mid-run.
 
 ### 1. Input mzML
 
-Raw vendor files: run the `msconvert` skill first. An mzML the user gave
-you: run `bash skills/msconvert/scripts/check_mzml.sh <input>.mzML`
-before TopFD -- it must report `OK` (centroided, has MS2).
+Raw vendor files: load the `msconvert` skill first -- it converts them to
+the centroided mzML TopFD needs. An mzML the user gave you: run the
+`msconvert` skill's output check (its step 4) before TopFD -- it must be
+centroided and have MS2 spectra.
 
 ### 2. TopFD -- deconvolute mzML/mzXML to msalign + feature files
 

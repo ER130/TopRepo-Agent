@@ -1,146 +1,188 @@
 ---
 name: msconvert
 description: |
-  Convert vendor raw mass-spec files (Thermo .raw, Bruker .d, ...) to
-  centroided mzML with ProteoWizard's msconvert, the first step before
-  TopFD/TopPIC (toppic_suite). Windows (WSL) only for now: uses the
-  user's own Windows install of ProteoWizard, and tells them where to
-  download it if it's missing. Also checks any mzML (converted here or
-  supplied by the user) is centroided and has MS2 spectra.
+  Convert vendor raw mass-spec files (Thermo .raw, Bruker .d, Sciex .wiff,
+  ...) to an open format -- mzML, mzXML, MGF, ... -- with ProteoWizard's
+  msconvert. The output format and filters are the user's choice; when the
+  data is headed into one of this project's pipelines (TopFD/TopPIC,
+  TopRepo, PDpred), the default is what that pipeline needs (centroided
+  mzML). Windows (WSL) only for now: uses the user's own Windows install
+  of ProteoWizard, and tells them where to download it if it's missing.
   Use when users:
   (1) give you a .raw/.d/.wiff file, or ask to process raw data
-  (2) ask to convert raw to mzML, or mention msconvert / MSConvertGUI /
-      ProteoWizard / peak picking / centroiding
+  (2) ask to convert raw files to mzML/mzXML/MGF, or mention msconvert /
+      MSConvertGUI / ProteoWizard / peak picking / centroiding
   (3) supply an mzML and you're about to run TopFD on it
-  Keywords: raw, .raw, .d, msconvert, MSConvertGUI, ProteoWizard, mzML,
-  centroid, peak picking, profile, vendor format, convert
+  Keywords: raw, .raw, .d, .wiff, msconvert, MSConvertGUI, ProteoWizard,
+  mzML, mzXML, MGF, centroid, peak picking, profile, vendor format, convert
 ---
 
-# msconvert (raw -> centroided mzML)
+# msconvert (vendor raw -> open formats)
 
 ## The Core Philosophy
 
-> **TopFD needs centroided mzML with MS2 spectra -- check it, don't assume it.**
+> **The output is the user's choice -- unless the pipeline it feeds decides it.**
 
-msconvert's default output keeps the vendor's profile data. TopFD
-deconvolutes profile spectra poorly, so every conversion here adds the
-peak-picking filter, and every mzML -- converted here or handed over by
-the user -- goes through `check_mzml.sh` before TopFD.
+msconvert is a general converter: mzML, mzXML, MGF and more, with
+filters for peak picking, MS level, scan range and so on. Which of these
+is right depends entirely on what the file is for, so:
 
-msconvert's vendor readers (Thermo, Bruker, ...) are Windows-only. This
-skill therefore drives the user's own Windows install of ProteoWizard
-from WSL (WSL can run Windows `.exe` files directly). **Mac and native
-Linux aren't supported yet.**
+1. **The user names a format or settings** -> use exactly that.
+2. **The user names a pipeline** (or the raw file is clearly headed into
+   one -- e.g. "run TopPIC on this", "the whole TopRepo pipeline") -> use
+   that pipeline's requirement from the table below, and say so in the
+   plan.
+3. **Neither** -> ask what the file is for, or which format they want,
+   before converting. Don't pick one silently.
 
-The scripts were tested against a stand-in for `msconvert.exe`, not the
-real program. On a real run, report exactly what happened -- including
-any error text -- rather than assuming it worked.
+### What each pipeline needs
+
+| Downstream | Format | Filter | Why |
+|---|---|---|---|
+| `toppic_suite` (TopFD -> TopPIC), and therefore `toprepo_pipeline`, `ms_process`, `pdpred_pipeline` | `--mzML` | `--filter "peakPicking vendor msLevel=1-"` | TopFD needs centroided spectra, MS1 and MS2; it deconvolutes profile data poorly |
+
+When a new skill is added that reads msconvert output, add its row here.
+A user's explicit choice still overrides the table -- but if it
+conflicts with the pipeline they asked for (e.g. profile mzML for TopFD),
+point out the conflict before converting.
+
+### Windows only, for now
+
+msconvert's vendor readers (Thermo, Bruker, Sciex, ...) are Windows-only.
+This skill drives the user's own Windows install of ProteoWizard from WSL
+(WSL can run Windows `.exe` files directly). **Mac and native Linux
+aren't supported yet.**
 
 ## When to Use This
 
-- The user has vendor raw files and wants to run TopFD/TopPIC, TopRepo or
-  PDpred on them -- this is the step before `toppic_suite`
-- The user gives you an mzML: skip the conversion, but run the check
-  (step 3) before handing it to TopFD
+- The user has vendor raw files and wants them converted, or wants to run
+  one of this project's pipelines on them -- this is the step before
+  `toppic_suite`
+- The user gives you an mzML to run TopFD on: no conversion, but do the
+  output check (step 4) first
 - **Not this skill**: deconvolution and identification -- that's
-  `toppic_suite`, which reads this skill's mzML output
+  `toppic_suite`
 
 ## Before You Start
 
-- **Where the files go**: the mzML belongs in the same `<ms_dir>` that
-  `toppic_suite` will use (by default `runs/<run_name>/01_toppic_suite/`,
-  see `skills/_shared/run_layout.md`). Resolve it once and reuse it.
-- **Keep the raw file and `<ms_dir>` on a Windows drive** (`/mnt/c/...`,
-  `/mnt/d/...`). `msconvert.exe` is a Windows program and may not read or
-  write inside WSL's own filesystem (`/home/...`). If the project folder
-  is inside WSL's filesystem, ask the user where on a Windows drive to put
-  the output.
-- Tell the user which files you'll convert and where the mzML will go,
-  and wait for them to confirm before starting.
+**Plan, then confirm.** Tell the user which files you'll convert, the
+output format and filters (and where they came from: the user, or which
+pipeline's row above), and the output folder. Wait for confirmation.
+
+- **Output folder**: if it's for a pipeline, use that pipeline's input
+  folder -- for `toppic_suite`, its `<ms_dir>` (by default
+  `runs/<run_name>/01_toppic_suite/`, see `skills/_shared/run_layout.md`).
+  Otherwise ask, or put it next to the raw file.
+- **Keep the raw file and output folder on a Windows drive**
+  (`/mnt/c/...`, `/mnt/d/...`). `msconvert.exe` is a Windows program and
+  may not read or write inside WSL's own filesystem (`/home/...`).
 
 ## Steps
 
-### 1. Find msconvert
+### 1. Check this is Windows (WSL)
 
 ```
-bash skills/msconvert/scripts/find_msconvert.sh
+grep -qi microsoft /proc/version && echo WSL
 ```
 
-It looks on `PATH`, under `C:\Program Files\ProteoWizard\`, and in the
-installer's default per-user location
-`C:\Users\<name>\AppData\Local\Apps\ProteoWizard*\`, and prints the newest
-`msconvert.exe` it finds.
+No `WSL` -> Mac/Linux, not supported yet. Ask the user to convert on a
+Windows PC with MSConvertGUI using the settings you worked out above, and
+give you the output file. For TopFD that means: output format mzML, add
+the **Peak Picking** filter (algorithm: vendor, MS levels: 1-).
 
-| Exit | Meaning | What to do |
-|---|---|---|
-| 0 | Prints the path | Go to step 2 |
-| 1 `NOT_FOUND` | ProteoWizard isn't installed | Stop. Tell the user to install it (Windows 64-bit) from https://proteowizard.sourceforge.io/download.html and wait until they say it's done, then re-run this step. **Never download or install it yourself** -- the installer asks the user to accept the instrument vendors' licenses. If they say it's installed somewhere unusual, re-run with `MSCONVERT=/mnt/<drive>/.../msconvert.exe` |
-| 2 `NOT_WSL` | Not a Windows machine | Mac/Linux aren't supported yet. Ask the user to convert on a Windows PC with MSConvertGUI -- output format mzML, add the **Peak Picking** filter (algorithm: vendor, MS levels: 1-) -- and give you the mzML. Then go to step 3 |
-
-### 2. Convert
-
-One raw file per call, **with the bash tool's `run_in_background: true`**
-(a real raw file takes minutes; a normal call is killed after 120s). Run
-several files one after another, not all at once:
+### 2. Find msconvert.exe
 
 ```
-bash skills/msconvert/scripts/run_msconvert.sh <input>.raw <ms_dir>
+command -v msconvert.exe
+ls "/mnt/c/Program Files/ProteoWizard/"*/msconvert.exe \
+   /mnt/c/Users/*/AppData/Local/Apps/ProteoWizard*/msconvert.exe 2>/dev/null
 ```
 
-A Bruker `.d` folder is passed the same way. The script runs:
+The second location is where the ProteoWizard installer puts a per-user
+install by default. If several versions are listed, use the newest (the
+version number is in the folder name).
+
+**Nothing found** -> stop. Tell the user to install ProteoWizard (Windows
+64-bit) from https://proteowizard.sourceforge.io/download.html, and wait
+until they say it's done. **Never download or install it yourself**: the
+installer asks the user to accept the instrument vendors' licenses. If
+they say it's installed somewhere else, ask for the path.
+
+Then confirm it runs and see which options this version has:
 
 ```
-msconvert.exe <input> --mzML --filter "peakPicking vendor msLevel=1-" -o <ms_dir>
+"<path to msconvert.exe>" --help
 ```
 
-(`peakPicking` must be the first filter, or the vendor's centroiding
-can't be used), writes `<ms_dir>/<input name>.mzML`, then runs step 3 on
-it. Wait for the background task's `completed` notification before
-reading the result.
+Build the command from that output, not from memory -- the same rule
+`toppic_suite` follows for TopFD/TopPIC.
 
-### 3. Check the mzML
+### 3. Convert
 
-`run_msconvert.sh` does this itself. Run it by hand on an mzML the user
-supplied:
+`msconvert.exe` needs Windows paths: convert each with `wslpath -w`.
+General form:
 
 ```
-bash skills/msconvert/scripts/check_mzml.sh <ms_dir>/<input>.mzML
+"<msconvert.exe>" "$(wslpath -w <input>)" --<format> [--filter "<filter>" ...] \
+    -o "$(wslpath -w <output dir>)"
 ```
 
-It prints `MS1=<n> MS2=<n> centroid=<n> profile=<n>`, then:
+- `<format>`: `mzML`, `mzXML`, `mgf`, ... -- check `--help` for the list.
+- `--filter`: as chosen in the Core Philosophy. **`peakPicking` must be
+  the first filter**, or the vendor's centroiding can't be used.
+- A Bruker `.d` folder is passed the same way as a file.
+- The output is named after the input (`<input>.mzML`, ...).
 
-| Exit | Meaning | What to do |
-|---|---|---|
-| 0 `OK` | Centroided, has MS2 | Hand the mzML to `toppic_suite` (TopFD) |
-| 3 `PROFILE` | Some spectra are profile | Re-convert with step 2 (or ask the user to redo it with Peak Picking added) |
-| 4 `NO_MS2` | No MS2 spectra at all | Stop and show the user the counts. TopPIC can't identify anything without MS2 |
-| 1 `MISSING` | No mzML at that path | The conversion failed -- show the user the msconvert output |
+Run it **with the bash tool's `run_in_background: true`**, no `&` or
+`nohup` -- a real raw file takes minutes, and a normal bash call is
+killed after 120s. One file per call, one after another, not all at
+once. Wait for the background task's `completed` notification before
+checking the output.
+
+### 4. Check the output
+
+Confirm the file exists and isn't empty (`ls -la`), then check it fits
+what it's for. For a TopFD-bound mzML (also run this on an mzML the user
+gives you directly):
+
+```
+grep -c 'name="ms level" value="2"' <file>.mzML   # MS2 spectra: must be > 0
+grep -c '"MS:1000128"' <file>.mzML                # profile: must be 0 (or 1, from the file header)
+grep -c '"MS:1000127"' <file>.mzML                # centroid: about the spectrum count
+```
+
+- No MS2 -> stop and show the user. TopPIC can't identify anything
+  without MS2.
+- Profile spectra -> it wasn't centroided. Re-convert with peak picking
+  (or ask the user to redo it with the Peak Picking filter added).
+
+For other formats, at least count the spectra (e.g. `grep -c '^BEGIN
+IONS' <file>.mgf`) and compare with what the user expects.
 
 ## Reporting back
 
-Per file: the mzML path, the counts line from `check_mzml.sh`, and its
-verdict. If msconvert failed, quote its error output and stop there --
-don't move on to TopFD with a missing or partial mzML.
+Per file: the exact command you ran, the output path and size, and the
+check results. If msconvert failed, quote its error output and stop --
+don't hand a missing or partial file to the next step.
 
 ## Anti-Patterns
 
 | Pattern | Problem | Fix |
 |---|---|---|
-| Writing the msconvert command by hand, without the peak-picking filter | Profile mzML, which TopFD handles poorly | Use `run_msconvert.sh` |
-| Passing an mzML the user supplied straight to TopFD | It may be profile, or have no MS2 | Run `check_mzml.sh` first |
+| Picking a format/filters yourself when the user named neither a format nor a pipeline | It may not be what they need | Ask what the file is for |
+| Converting for TopFD without `peakPicking vendor msLevel=1-`, or with it not first | Profile mzML, which TopFD handles poorly | Use the table's row; peakPicking first |
+| Passing an mzML the user supplied straight to TopFD | It may be profile, or have no MS2 | Run step 4's check first |
+| Writing msconvert options from memory | Options differ between versions | Read `msconvert.exe --help` first |
 | Downloading or installing ProteoWizard for the user | The installer requires the user to accept the vendors' licenses | Give them the link and wait |
-| Running the conversion as a normal bash call, or with `&`/`nohup` | Killed after 120s, or when the call returns, leaving a partial mzML | `run_in_background: true`, plain command |
+| Passing Linux paths (`/mnt/d/...`) to `msconvert.exe` | It's a Windows program and expects `D:\...` | `wslpath -w` on every path |
+| Running the conversion as a normal bash call, or with `&`/`nohup` | Killed after 120s, or when the call returns, leaving a partial file | `run_in_background: true`, plain command |
 | Converting several raw files at once | They compete for disk and memory, and a failure is harder to pin down | One after another |
-| Writing the mzML inside WSL's own filesystem | `msconvert.exe` may not be able to write there | Use a `/mnt/<drive>/...` folder |
 
 ## Resources
 
-Scripts (`skills/msconvert/scripts/`):
-- `find_msconvert.sh` -- finds the user's Windows `msconvert.exe`
-- `run_msconvert.sh` -- raw -> centroided mzML, then checks it
-- `check_mzml.sh` -- counts MS1/MS2 and centroid/profile spectra in an mzML
-
 External: ProteoWizard (https://proteowizard.sourceforge.io), installed
-by the user on Windows.
+by the user on Windows. Its own documentation of msconvert's options:
+`msconvert.exe --help`.
 
-Related skills: `toppic_suite` -- the next step (TopFD -> TopPIC).
+Related skills: `toppic_suite` -- the next step for TopFD/TopPIC
+(centroided mzML in, msalign/PrSM out).
