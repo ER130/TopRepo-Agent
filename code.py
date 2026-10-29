@@ -20,13 +20,20 @@ The model loads the full SKILL.md only when it calls load_skill.
     +------------------+                v
                                  system prompt catalog
 
-    LLM -- load_skill(name) --> full SKILL.md
-     ^                              |
-     +--------- tool_result --------+
+    LLM -- load_skill(name) --> pinned: full SKILL.md joins the system
+     ^                          prompt for the rest of the session
+     +--- short tool_result ----+
+
+A loaded skill lives in the system prompt, not in a tool_result, so
+context compaction (which only rewrites messages) can never cut it.
 
 Before every model call, ContextCompactor.prepare() keeps messages under
 budget: persist oversized tool results -> archive old history -> shorten
-older results -> summarize as a last resort (s08). Memory (.memory/)
+older results -> summarize as a last resort (s08). The Lead's model
+calls mark two prompt-caching breakpoints -- the end of the stable
+system prompt and the last message -- so the unchanged prefix of each
+request is billed at the cache-read rate (PROMPT_CACHING=0 turns it
+off), and every call logs its token usage. Memory (.memory/)
 recalls relevant records at the start of a turn and extracts durable
 facts once the turn ends (s09). Tasks (.tasks/) persist dependencies,
 ownership, and status across turns via create_task/update_task/
@@ -100,6 +107,9 @@ TASKS_DIR = WORKDIR / ".tasks"
 TASK_ID_PATTERN = re.compile(r"^task_[0-9a-f]{8}$")
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
+# Some Anthropic-compatible providers may reject cache_control; set
+# PROMPT_CACHING=0 in .env to send requests without it.
+PROMPT_CACHING = os.getenv("PROMPT_CACHING", "1") != "0"
 
 
 # -- Skill catalog --
@@ -108,6 +118,7 @@ class SkillLoader:
     def __init__(self, skills_dir: Path):
         self.skills_dir = skills_dir
         self.skills: dict[str, dict[str, str]] = {}
+        self.loaded: list[str] = []
         self.scan()
 
     @staticmethod
@@ -174,6 +185,32 @@ class SkillLoader:
             return skill["content"]
         available = ", ".join(self.skills) or "none"
         return f"Error: Unknown skill '{name}'. Available: {available}"
+
+    def pin(self, name: str) -> str:
+        """load_skill's handler. Returning the full SKILL.md as a
+        tool_result put it where ContextCompactor shortens or archives
+        old results -- with five skills (~100k chars) loaded, the text
+        was cut before the model had planned from it, and it planned
+        from memory instead. Pinning keeps it in the system prompt
+        (see pinned_text) for the rest of the session instead."""
+        if name not in self.skills:
+            return self.load(name)
+        if name not in self.loaded:
+            self.loaded.append(name)
+        return (f"Loaded skill '{name}'. Its full SKILL.md is now in the "
+                "system prompt under 'Loaded skills' and stays there for "
+                "the rest of this session -- read and follow it there.")
+
+    def pinned_text(self) -> str:
+        loaded = [name for name in self.loaded if name in self.skills]
+        if not loaded:
+            return ""
+        skills = "\n\n".join(
+            f'<skill name="{name}">\n{self.skills[name]["content"]}\n</skill>'
+            for name in loaded)
+        return ("Loaded skills -- the full instructions of every skill "
+                "loaded this session. Follow them; they take precedence "
+                f"over general knowledge of the same tools.\n\n{skills}")
 
 
 SKILL_LOADER = SkillLoader(SKILLS_DIR)
@@ -525,7 +562,12 @@ def load_memories(messages: list) -> str:
     return json.dumps(loaded, ensure_ascii=False, indent=2) if loaded else ""
 
 
-def build_system(relevant_memories: str = "") -> str:
+def build_system(relevant_memories: str = "") -> list[dict]:
+    """System prompt as text blocks, most stable first: fixed
+    instructions + skill catalog, then pinned skills (grow only when
+    load_skill is called), then memory (changes every turn). The cache
+    breakpoint sits after the pinned skills, so a new turn's memory
+    doesn't invalidate the cached tools + instructions + skills prefix."""
     sections = [
         f"You are a coding agent at {WORKDIR}. Use tools to solve tasks. "
         "For a small, clearly-scoped request, act directly. For a "
@@ -586,12 +628,95 @@ def build_system(relevant_memories: str = "") -> str:
         "higher-risk teammate touches the workspace, and shut teammates "
         "down once their work is done.",
     ]
+    pinned = SKILL_LOADER.pinned_text()
+    if pinned:
+        sections.append(pinned)
+    blocks = [{"type": "text", "text": "\n\n".join(sections)}]
+    if PROMPT_CACHING:
+        blocks[0]["cache_control"] = {"type": "ephemeral"}
+
+    memory_sections = []
     index = read_memory_index()
     if index:
-        sections.append(f"Memory catalog:\n{index}")
+        memory_sections.append(f"Memory catalog:\n{index}")
     if relevant_memories:
-        sections.append(f"Relevant memory records:\n{relevant_memories}")
-    return "\n\n".join(sections)
+        memory_sections.append(f"Relevant memory records:\n{relevant_memories}")
+    if memory_sections:
+        blocks.append({"type": "text", "text": "\n\n".join(memory_sections)})
+    return blocks
+
+
+def with_cache_breakpoint(messages: list) -> list:
+    """Return a copy of messages whose last block carries a cache
+    breakpoint, so the whole history so far is cached for the next
+    call -- each call then only pays full price for what was appended
+    since. session_history itself is left untouched."""
+    if not PROMPT_CACHING or not messages:
+        return messages
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content:
+            return messages
+        blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        blocks = [*content[:-1], dict(content[-1])]
+    else:
+        # An assistant turn of SDK block objects; leave it uncached.
+        return messages
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return [*messages[:-1], {**last, "content": blocks}]
+
+
+# Per million tokens: (input, output). Cache reads bill at 0.1x input and
+# 5-minute cache writes at 1.25x input. Unknown models log tokens only.
+MODEL_PRICES = {
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-haiku-5-5": (0.10, 0.50),
+}
+
+
+class UsageMeter:
+    """Logs each model call's token usage and the session's running
+    total, so a run's real cost can be read from the log (webui.log
+    when served by server.py)."""
+
+    def __init__(self, model: str):
+        self.prices = MODEL_PRICES.get(model)
+        self.totals = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
+        self.calls = 0
+
+    def cost(self, counts: dict) -> float | None:
+        if not self.prices:
+            return None
+        input_price, output_price = self.prices
+        return (counts["input"] * input_price
+                + counts["cache_read"] * input_price * 0.1
+                + counts["cache_write"] * input_price * 1.25
+                + counts["output"] * output_price) / 1_000_000
+
+    def record(self, usage) -> None:
+        counts = {
+            "input": getattr(usage, "input_tokens", 0) or 0,
+            "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+            "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            "output": getattr(usage, "output_tokens", 0) or 0,
+        }
+        self.calls += 1
+        for key, value in counts.items():
+            self.totals[key] += value
+        line = (f"[usage] in={counts['input']} cache_read={counts['cache_read']} "
+                f"cache_write={counts['cache_write']} out={counts['output']}")
+        total_cost = self.cost(self.totals)
+        if total_cost is not None:
+            line += f" | session: {self.calls} calls, ${total_cost:.2f}"
+        print(f"\033[2m{line}\033[0m")
+
+
+USAGE = UsageMeter(MODEL)
 
 
 # -- Memory extract and consolidate --
@@ -2787,7 +2912,7 @@ TOOL_HANDLERS = {
     "write_file": run_agent_write,
     "edit_file": run_agent_edit,
     "glob": run_agent_glob,
-    "load_skill": SKILL_LOADER.load,
+    "load_skill": SKILL_LOADER.pin,
     "create_task": run_create_task,
     "update_task": run_update_task,
     "list_tasks": run_list_tasks,
@@ -2996,7 +3121,9 @@ def execute_tool(block) -> str:
 # -- Context compaction --
 
 class ContextCompactor:
-    CONTEXT_CHAR_LIMIT = 50000
+    # About 85k tokens of history. Loaded skills live in the system
+    # prompt (SkillLoader.pin), so none of this budget goes to them.
+    CONTEXT_CHAR_LIMIT = 300000
     TOOL_RESULT_BATCH_CHAR_LIMIT = 200000
     LARGE_RESULT_CHAR_LIMIT = 30000
     SUMMARY_INPUT_CHAR_LIMIT = 80000
@@ -3279,7 +3406,6 @@ MAX_REACTIVE_RETRIES = 1
 
 def agent_loop(messages: list, active_request: str):
     relevant_memories = load_memories(messages)
-    system = build_system(relevant_memories)
     reactive_retries = 0
     unacknowledged_cron_jobs: list[CronJob] = []
 
@@ -3300,11 +3426,16 @@ def agent_loop(messages: list, active_request: str):
 
         inject_background_results(messages)
         messages[:] = COMPACTOR.prepare(messages, active_request)
+        # Rebuilt every call: a load_skill in the previous step pins a
+        # skill into it.
+        system = build_system(relevant_memories)
         try:
             response = client.messages.create(
-                model=MODEL, system=system, messages=messages,
+                model=MODEL, system=system,
+                messages=with_cache_breakpoint(messages),
                 tools=TOOLS, max_tokens=8000,
             )
+            USAGE.record(response.usage)
             reactive_retries = 0
         except Exception as e:
             too_long = any(text in str(e).lower()
@@ -3409,7 +3540,8 @@ def print_latest_assistant_text(messages: list):
 def run_agent_turn_locked(user_query: str | None = None):
     if user_query is not None:
         trigger_hooks("UserPromptSubmit", user_query)
-        matched_skills = keyword_skill_matches(user_query)
+        matched_skills = [name for name in keyword_skill_matches(user_query)
+                          if name not in SKILL_LOADER.loaded]
         if matched_skills:
             names = ", ".join(matched_skills)
             user_query = (
