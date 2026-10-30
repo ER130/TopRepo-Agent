@@ -107,22 +107,16 @@ default, and just as explicitly say "the default is right here, because
   input actually lacks MS1 spectra; recommend `-g` only if the user has
   said the HTML output isn't needed; otherwise recommend leaving `-a` at
   its default (reads activation per-spectrum from the input).
-- `-f` on TopPIC has no default -- this isn't a keep-or-change question,
-  it's a real decision to make from the sample prep (standard
-  iodoacetamide alkylation -> C57; iodoacetic acid -> C58). First run
-  `python3 skills/param_precedents/scripts/lookup_file.py <input file>`:
-  if the input is one of TopRepo's own files, its subdataset's
-  `toppic_fixed_mod` is the answer for this exact data -- use it, cite
-  the accession, and don't re-weigh it against other projects of the
-  same species (see `param_precedents`, "How to Look Up a Precedent").
-  Only if that finds nothing, check `param_precedents` for a matching
-  species/instrument/method before asking -- if a close precedent exists, lead with it (e.g.
-  "TopRepo's comparable E. coli datasets mostly used no fixed
-  modification unless alkylated -- was yours?") rather than a blind
-  yes/no question. Only about 19% of that corpus is alkylated, so a
-  precedent is never a reason to default toward C57 either -- recommend
-  based on what you actually know about the sample prep; say plainly if
-  you don't know and need to ask, rather than picking one silently.
+- `-f` on TopPIC has no default and no safe guess -- it follows the
+  sample prep (iodoacetamide alkylation -> C57; iodoacetic acid -> C58;
+  none). Decide it in `param_precedents`' order ("Deciding `-f`"): the
+  input's own corpus entry (`python3
+  skills/param_precedents/scripts/lookup_file.py <input file>`) -> the
+  user's answer -> **if the user doesn't know, the data itself** (see
+  "Deciding `-f` from the data" under step 3). Never pick it from how
+  common a value is in the corpus or in a similar dataset. Until it's
+  decided, the plan says "`-f`: to be decided by trial runs", not a
+  recommendation.
 - `-d` on TopPIC: recommend turning it on for any real identification run
   -- without it, filtering falls back to raw E-values instead of an FDR
   estimate, which is rarely what's actually wanted (reasonable to skip
@@ -422,7 +416,11 @@ Philosophy): `-a` activation method (default `FILE`, i.e. read per-spectrum
 from the input -- don't override this unless the input genuinely lacks
 it), `-u` thread count (default 1 -- always set this explicitly on a
 multi-core machine), `-g` to skip HTML generation if you don't need
-visualization. `-o`/`--missing-level-one` if the input has no MS1 spectra
+visualization. `-m` max mass: 50,000 Da by default in this TopFD 1.9;
+TopRepo itself used 70,000 Da (TopFD 1.7.10). Keep the default --
+PDpred only takes sequences up to 200 residues (~22 kDa) anyway -- and
+pass `-m 70000` only if the user wants TopRepo's exact setting or
+expects proteoforms above 50 kDa. `-o`/`--missing-level-one` if the input has no MS1 spectra
 (the tests/data mzxml_test_no_ms1.mzXML fixture is exactly this case).
 
 ### 3. TopPIC -- search msalign against a FASTA for proteoform identification
@@ -447,6 +445,44 @@ Either form: **run it with `run_in_background: true`, no `&`** -- same
 reason as TopFD: TopPIC on a real msalign file takes far longer than the
 120s a normal bash call gets. Don't start it until TopFD's background
 task has completed and passed the output check in step 2.
+
+**Deciding `-f` from the data** (only when the user doesn't know the
+sample prep -- see `param_precedents`, "Deciding `-f`"). Run TopFD as
+usual first; the trials reuse its output.
+
+1. **Pick the trial input.** Up to ~3,000 MS2 spectra: use one whole
+   `_ms2.msalign` file. Larger: take one file (for a multi-file dataset,
+   one or two typical files -- not every file) and keep every k-th
+   spectrum, with k = total / 1,000 rounded up:
+   ```
+   grep -c '^BEGIN IONS' <input>_ms2.msalign          # total
+   awk -v k=<k> '/^BEGIN IONS/{n++; keep=((n-1)%k==0)} n==0||keep' \
+       <input>_ms2.msalign > trial_<value>/<input>_ms2.msalign
+   ```
+   (Not yet verified with TopPIC on a subset -- if TopPIC errors on it,
+   use the whole file and say so.)
+2. **One folder per candidate** -- `trial_none/`, `trial_C57/` (add
+   `trial_C58/` only if iodoacetic acid is plausible). Each holds the
+   msalign and a copy of `<input>_ms2.feature` under the same base name:
+   TopPIC looks for `<msalign name without .msalign>.feature` next to the
+   msalign. Run `toppic` with the same flags as the real run (`-u`, `-d`)
+   plus that candidate's `-f` (none: no `-f`), one candidate at a time,
+   in the background.
+3. **Compare** in each folder's `*_prsm_single.tsv`:
+   - PrSMs at the 1% FDR cutoff (the number of rows) -- the main measure.
+   - Identified proteoforms containing C -- the one most sensitive to
+     `-f`: a wrong choice leaves each cysteine 57 Da off, which TopPIC can
+     only explain as an unexpected shift, and only one is allowed by
+     default, so Cys-rich proteoforms drop out.
+   - In the `none` run, unexpected shifts near +57.02 Da on cysteines (or
+     -57.02 Da in the C57 run) point to the other value.
+4. **Decide.** A candidate wins if it has at least 10% more PrSMs and
+   the cysteine evidence agrees. With fewer than ~50 PrSMs in every run,
+   or a smaller or contradictory difference, the data can't tell:
+   show the user the numbers and let them choose. State the result in
+   the plan, e.g. "`-f` C57 -- trial on 1,000 spectra of st_1: C57 401
+   PrSMs vs none 312; 38 vs 9 Cys-containing proteoforms", and put the
+   same line in `run_log.txt`.
 
 **Several input files: one TopPIC run at a time** (same for TopFD), each
 with the full `-u`. Two at once oversubscribe the CPU, and two TopPIC runs

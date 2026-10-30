@@ -117,6 +117,9 @@ across the whole corpus:
 
 - **TopFD 1.7.10**: max charge 30, max mass 70,000 Da, peak error
   tolerance 0.02 m/z, MS1 S/N 3, MS/MS S/N 1, precursor window 3 m/z.
+  These are TopRepo's settings, not the defaults of the TopFD 1.9 this
+  project builds -- its max mass default is 50,000 Da (see
+  `toppic_suite`), so don't describe 70,000 as "the default".
 - **TopPIC 1.7.11**: 10 ppm precursor/fragment tolerance, one unexpected
   mass shift (-500 to +500 Da), PrSM and proteoform FDR both 0.01,
   cluster tolerance 1.2 Da.
@@ -128,25 +131,50 @@ modification, dissociation method, separation method, and FAIMS. Don't
 imply a dataset-specific TopFD/TopPIC tuning precedent exists beyond
 those; it doesn't.
 
-## Cysteine Protection: Don't Default to C57
+## Cysteine Protection: Deciding `-f`
 
-**Only 9 of 38 projects (about 19% of the corpus's 3,165 raw files) used
-carbamidomethylation.** The other 28 used no fixed modification at all.
-The same lab appears on both sides of this split (project 9's and
-project 2's CZE datasets use C57; several of the same group's other
-datasets don't), so "which lab ran it" isn't a usable shortcut either.
+**Neither value is a safe default.** In this corpus only 9 of 38 projects
+(about 19% of its 3,165 raw files) used carbamidomethylation, but that is
+TopRepo's mix of studies, not a fact about the user's sample -- it says
+nothing about whether *their* data was alkylated. Don't use the corpus
+share (either way) as a reason for `none` or for C57. The same lab even
+appears on both sides of the split.
 
-**Never default `toppic -f` to C57 because it's the more commonly-known
-choice -- in this corpus it's the minority value, not the safe default.**
-Ask whether the sample was alkylated before reaching for a precedent;
-only fall back to the closest matching row if the user genuinely doesn't
-know, and say explicitly that it's a precedent-based guess, not a fact
-about their sample.
+Decide in this order, and stop at the first step that gives an answer:
+
+1. **The input file is in the corpus** (`lookup_file.py` hit): use its
+   subdataset's `toppic_fixed_mod`. That's the same data, not a precedent.
+2. **Ask the user** whether the sample was reduced and alkylated, and
+   with what (iodoacetamide -> C57; iodoacetic acid -> C58; none). Also ask
+   where the data comes from -- a paper, a PRIDE/MassIVE record or a
+   tutorial usually states the sample prep; read it if you can reach it.
+3. **The user doesn't know, or doesn't answer: decide from the data** --
+   trial TopPIC runs, step-by-step in `toppic_suite` ("Deciding `-f` from
+   the data"). Tell the user that's what you're doing and why.
+4. **A similar corpus row** (Step 2 of "How to Look Up a Precedent") is
+   background for the conversation at any point -- never the deciding
+   reason.
 
 One dataset (project 20, PXD049969) needs the modification set per raw
 file, not per project: only its 3 `*_1DLC_alkylated_*` files are C57,
 the other 124 are none -- the study was literally comparing sample-prep
 methods, alkylation included, as an experimental variable.
+
+## Dissociation, FAIMS, Instrument: Read Them From the Data
+
+For a file that isn't in the corpus, these three don't need a precedent
+or a question -- the mzML records them:
+
+```
+grep -o 'name="[^"]*dissociation[^"]*"' <file>.mzML | sort | uniq -c   # HCD = "beam-type collision-induced dissociation"
+grep -c 'name="FAIMS compensation voltage"' <file>.mzML                # > 0 means FAIMS
+grep -m1 -A3 '<instrumentConfiguration ' <file>.mzML                   # instrument model
+```
+
+Several dissociation names with similar counts usually means a method
+that alternates (e.g. HCD/ETD) -- say so. TD-Pred was trained on HCD/CID
+only (see "When to Use This"), so ETD/EThcD data matters for
+`pdpred_pipeline`.
 
 ## Known Data-Quality Caveats
 
@@ -179,7 +207,7 @@ methods, alkylation included, as an experimental variable.
 |---|---|---|
 | Matching on species/instrument before checking whether the input file itself is in the corpus | A same-species row is someone else's sample prep; the file's own subdataset is the actual answer. Two zebrafish brain projects in the corpus disagree on `-f` | Run `scripts/lookup_file.py` on the input filename first; use species matching only when it finds nothing |
 | Searching the table for the literal filename or a filename-derived `<dataset_id>` | The table is per subdataset; it has no filenames, so a literal search always misses and the data looks "new" when it isn't | Use `scripts/lookup_file.py`, which goes through the per-file index |
-| Defaulting `-f` to C57 because it's the well-known/common choice | Only ~19% of this corpus's files used it -- it's the minority, not a safe default | Ask whether the sample was alkylated; use a precedent only as a fallback, and say so explicitly |
+| Choosing `-f` from the corpus share or a similar row -- C57 because it's well known, or `none` because ~81% of the corpus is | The corpus mix says nothing about this sample. Both errors have happened on this project (C57 for zebrafish data that was `none`; `none` for TopPIC-tutorial data that was C57) | Follow "Deciding `-f`": corpus file -> user -> trial runs on the data |
 | Treating this skill as a source of per-dataset TopFD/TopPIC numeric tuning | Almost the entire corpus shares one parameter set -- only `-f`/dissociation/separation/FAIMS genuinely vary | Read "What's Corpus-Wide, Not Per-Dataset" before citing a row as if every field were dataset-specific |
 | Citing `dissociation_S5` without checking `dissociation_meta` | The two disagree for project 25, and S5 is the one that's wrong there | Trust `dissociation_meta` where they differ |
 | Presenting a loosely-matching species/instrument as a confident precedent | A thin match stated with false confidence is worse than admitting there's no precedent | State how close the match actually is; say plainly when nothing matches well |
