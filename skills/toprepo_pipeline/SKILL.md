@@ -72,6 +72,10 @@ user doesn't have mzML + msalign + `.feature` + TopPIC PrSM TSV yet, use
 
 ## Before You Start
 
+**Check the machine first** for Phase 3's `--num_workers` and the run
+order: read `skills/_shared/hardware_check.md` and include its step-1
+results in the plan.
+
 **Plan first, then confirm.** Before running anything below, lay out the
 plan for the task -- which phase(s) apply, in what order, against which
 files and `<dataset_id>` -- and wait for the user to confirm it before
@@ -321,7 +325,7 @@ python3 skills/toprepo_pipeline/vendor/src/process/mgf/mgf_anno_file.py \
     --out <name>_anno_ms2.mgf
 ```
 `mgf_anno_file.py` uses `multiprocessing.Pool` with `cpu_count() - 1`
-workers by default (`--num_workers` to override) -- be mindful on a shared
+workers by default (`--num_workers` to override; see `skills/_shared/hardware_check.md`) -- be mindful on a shared
 machine, same as confirming epoch counts before a `pdpred_pipeline`
 training run.
 

@@ -35,6 +35,12 @@ been -- no `DATABASE_SEQUENCE` on the spectra yet -- that's the
 
 ## Before You Start
 
+**Check the machine first**: read `skills/_shared/hardware_check.md` and run
+its step-1 commands. Above all, whether there's a GPU: training picks a
+GPU automatically if PyTorch sees one and falls back to CPU otherwise,
+which is far slower. The plan says which device training will use, and on
+CPU proposes timing one epoch before committing to many.
+
 **Plan first, then confirm.** Before running anything below, lay out the
 plan -- which step(s), against which files, which `--target` and
 `--max_length`, whether this is a from-scratch train or a fine-tune -- and

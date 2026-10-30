@@ -62,6 +62,11 @@ the result. Start here once you have that mzML.
 
 ## Before You Start
 
+**Check the machine first.** Read `skills/_shared/hardware_check.md` and run its
+step-1 commands (cores, memory, GPU, disk, where the data is) before
+writing the plan. Thread counts and run order come from its table, and
+the plan shows the check's results next to the values chosen.
+
 **Plan first, then confirm.** Before running anything below, lay out the
 plan for the task -- which of Prerequisites/Pipeline steps apply, in what
 order, against which files -- and wait for the user to confirm it before
@@ -96,8 +101,8 @@ default, and just as explicitly say "the default is right here, because
 ..." when it isn't.
 
 - `-u` (threads, both tools): the default is 1, which is essentially never
-  the right value on a real machine -- check available cores and recommend
-  near that number instead of repeating the default.
+  the right value. Use `skills/_shared/hardware_check.md`: `cores - 1`, lower
+  if memory is short, and the plan says e.g. "16 cores -> `-u 15`".
 - `-a`/`-o`/`-g` on TopFD: recommend `-o` only once you've checked the
   input actually lacks MS1 spectra; recommend `-g` only if the user has
   said the HTML output isn't needed; otherwise recommend leaving `-a` at
@@ -175,8 +180,7 @@ because this section mentions both paths.
 **Memory**: TopFD/TopPIC's own docs say "at least 16 GB memory" for real
 datasets. This is a real constraint on large LC-MS runs, not boilerplate --
 if the machine has less, say so before launching a big job rather than
-letting it OOM partway through. Applies the same way whichever path below
-you're on.
+letting it OOM partway through. How that affects `-u`: `skills/_shared/hardware_check.md`.
 
 ### Docker (Windows, or any OS other than Ubuntu/macOS)
 
@@ -444,6 +448,13 @@ reason as TopFD: TopPIC on a real msalign file takes far longer than the
 120s a normal bash call gets. Don't start it until TopFD's background
 task has completed and passed the output check in step 2.
 
+**Several input files: one TopPIC run at a time** (same for TopFD), each
+with the full `-u`. Two at once oversubscribe the CPU, and two TopPIC runs
+against the same FASTA also compete for its `<database>.fasta_idx/`
+index -- on this project that left two single-threaded runs crawling for
+over an hour. Start the next file when the previous one's background task
+has completed.
+
 **The spectrum file is always `<input>_ms2.msalign` -- never
 `<input>_ms1.msalign`.** TopPIC identifies proteoforms by matching
 fragment ions, and only MS/MS (`LEVEL=2`) spectra have them. MS1
@@ -507,7 +518,8 @@ deconvoluted output.
 | Editing/regenerating a FASTA in place and re-running `toppic` against it | Verified: the cached `<database>.fasta_idx/` isn't invalidated by a content change -- you silently search the old database | `rm -rf <database>.fasta_idx/` first, or search-and-replace to a new filename |
 | Building the full `make install` (all six tools + six GUIs) when only TopFD/TopPIC are needed | Qt GUI compilation is the slow part and buys nothing for a command-line skill | `make -j$(nproc) topfd toppic` (add other console tools by name only if asked) |
 | Treating TopFD/TopPIC's own "16 GB memory" note as boilerplate | It's the vendor's stated minimum for real LC-MS runs, not a formality | Check available memory before a large job, flag it to the user if short |
-| Leaving `-u`/`--thread-number` at its default of 1 on a multi-core machine | Both tools default to single-threaded; real datasets are far slower than the ~4.5s/~2s smoke tests here | Pass `-u <nproc>` explicitly, as shown above |
+| Leaving `-u`/`--thread-number` at its default of 1 on a multi-core machine | Both tools default to single-threaded. On this project TopPIC ran on 1 of 16 cores | Check the machine per `skills/_shared/hardware_check.md` and pass `-u` explicitly |
+| Starting TopFD/TopPIC on several files at once | They oversubscribe the CPU, and TopPIC runs sharing a FASTA compete for its index | One file at a time, each with the full `-u` |
 | Passing a relative path to `docker run -v` | Docker requires an absolute host path for a bind mount; a relative one fails or silently mounts the wrong thing rather than erroring clearly | Resolve `<ms_dir>` to an absolute path first (`$(pwd)/<ms_dir>`, or the native `D:\...` form on Windows PowerShell) |
 | Reaching for Docker on Ubuntu/macOS without checking for an existing build or trying the native build first | This skill's default on Ubuntu/macOS is the native build, verified more thoroughly than the (stale) Docker image -- Docker is specifically the fallback for everything else, not an equally-valid first choice everywhere | Check for an existing build, then the OS, per Prerequisites -- Docker only when the OS isn't Ubuntu/macOS |
 | Attempting a native Windows build via `vendor/doc/windows_build.md` (MSYS2) because Docker isn't installed yet | This skill specifically routes Windows to Docker; the Windows build path exists upstream but is undocumented/unverified by this skill | Send the user to install Docker instead, wait for confirmation, re-check `docker info` |
