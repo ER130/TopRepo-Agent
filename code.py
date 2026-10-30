@@ -1727,11 +1727,31 @@ def run_complete_task(task_id: str) -> str:
 
 # -- Background tasks --
 
+# Commands that each want the whole machine run one at a time. The skills
+# say so, but agents have still launched several at once (three TopPIC
+# trials with -u 15 each on 16 cores, all building the same FASTA index),
+# so the queue enforces it. Matches the command word (topfd,
+# /usr/local/bin/toppic, msconvert.exe, td_pred.py), not path parts like
+# 01_toppic_suite/ or log names like toppic_st_1.log.
+HEAVY_COMMAND = re.compile(
+    r"(?:^|[\s;&|(/])"
+    r"(?:topfd|toppic|msconvert(?:\.exe)?"
+    r"|train_td_pred\.py|td_pred\.py|msalign_anno_to_hdf5\.py)"
+    r"(?=[\s;&|)'\"]|$)"
+)
+
+
+def is_heavy_command(command: str) -> bool:
+    return bool(HEAVY_COMMAND.search(command))
+
+
 class BackgroundManager:
     def __init__(self):
         self.tasks: dict[str, dict] = {}
         self.results: dict[str, str] = {}
         self._ready: list[str] = []
+        self._heavy_queue: list[tuple[str, str, Path | None]] = []
+        self._heavy_running: str | None = None
         self._counter = 0
         self._lock = threading.Lock()
 
@@ -1745,24 +1765,70 @@ class BackgroundManager:
         if cwd_error:
             raise ValueError(cwd_error)
 
+        heavy = is_heavy_command(command)
         with self._lock:
             self._counter += 1
             task_id = f"bg_{self._counter:04d}"
+            queued = heavy and self._heavy_running is not None
             self.tasks[task_id] = {
                 "tool_use_id": block.id,
                 "command": command,
-                "status": "running",
+                "status": "queued" if queued else "running",
             }
+            if queued:
+                self._heavy_queue.append((task_id, command, cwd))
+                print(f"  [background] queued {task_id}: {command[:60]}")
+                return task_id
+            if heavy:
+                self._heavy_running = task_id
 
-        thread = threading.Thread(target=self._run, args=(task_id, command, cwd), daemon=True)
         try:
-            thread.start()
+            self._launch(task_id, command, cwd)
         except Exception:
             with self._lock:
                 self.tasks.pop(task_id, None)
+                if self._heavy_running == task_id:
+                    self._heavy_running = None
             raise
-        print(f"  [background] started {task_id}: {command[:60]}")
         return task_id
+
+    def _launch(self, task_id: str, command: str, cwd: Path | None):
+        thread = threading.Thread(target=self._run, args=(task_id, command, cwd), daemon=True)
+        thread.start()
+        print(f"  [background] started {task_id}: {command[:60]}")
+
+    def describe_start(self, task_id: str) -> str:
+        """The tool result for a background command just submitted."""
+        with self._lock:
+            if self.tasks.get(task_id, {}).get("status") != "queued":
+                return (f"[Background task {task_id} started] "
+                        "The result will be collected on a later turn.")
+            ahead = [self._heavy_running]
+            for queued_id, _, _ in self._heavy_queue:
+                if queued_id == task_id:
+                    break
+                ahead.append(queued_id)
+        return (f"[Background task {task_id} queued] Heavy jobs (TopFD, "
+                "TopPIC, msconvert, TD-Pred) run one at a time, so it starts "
+                f"by itself once {', '.join(ahead)} finish. Its result will "
+                "be collected on a later turn, like any background task.")
+
+    def _start_next_heavy(self):
+        with self._lock:
+            if not self._heavy_queue:
+                self._heavy_running = None
+                return
+            task_id, command, cwd = self._heavy_queue.pop(0)
+            self._heavy_running = task_id
+            self.tasks[task_id]["status"] = "running"
+        try:
+            self._launch(task_id, command, cwd)
+        except Exception as e:
+            with self._lock:
+                self.tasks[task_id]["status"] = "failed"
+                self.results[task_id] = f"Error: could not start: {e}"
+                self._ready.append(task_id)
+            self._start_next_heavy()
 
     def _run(self, task_id: str, command: str, cwd: Path | None = None):
         try:
@@ -1774,15 +1840,18 @@ class BackgroundManager:
 
         with self._lock:
             task = self.tasks.get(task_id)
-            if task is None:
-                return
-            task["status"] = status
-            self.results[task_id] = output
-            self._ready.append(task_id)
+            if task is not None:
+                task["status"] = status
+                self.results[task_id] = output
+                self._ready.append(task_id)
+            heavy_done = self._heavy_running == task_id
+        if heavy_done:
+            self._start_next_heavy()
 
     def has_running(self) -> bool:
         with self._lock:
-            return any(t["status"] == "running" for t in self.tasks.values())
+            return any(t["status"] in ("running", "queued")
+                       for t in self.tasks.values())
 
     def collect(self) -> list[str]:
         with self._lock:
@@ -2800,7 +2869,9 @@ BASE_TOOLS = [
      "after 120s. For anything that may take longer (TopFD, TopPIC, training), "
      "set run_in_background to true: it then has no time limit, and its result "
      "is collected on a later turn. Don't use `cmd &` or nohup instead -- the "
-     "call's whole process group is killed when it returns.",
+     "call's whole process group is killed when it returns. Heavy background "
+     "jobs (TopFD, TopPIC, msconvert, TD-Pred) run one at a time: submitting "
+     "another while one runs queues it, and it starts by itself.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}, "run_in_background": {"type": "boolean"}}, "required": ["command"]}},
     {"name": "read_file", "description": "Read file contents.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
@@ -3103,8 +3174,7 @@ def execute_tool(block) -> str:
     if should_run_background(block.name, block.input):
         try:
             task_id = start_background_task(block)
-            output = (f"[Background task {task_id} started] "
-                      "The result will be collected on a later turn.")
+            output = BACKGROUND.describe_start(task_id)
         except Exception as e:
             output = f"Error: {e}"
     else:

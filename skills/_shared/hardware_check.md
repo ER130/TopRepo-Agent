@@ -21,9 +21,11 @@ df -h <data dir>                        # free disk where outputs will go
 grep -qi microsoft /proc/version && echo WSL
 ```
 
-Also note **where the data is**: under WSL, a path on `/mnt/<drive>/`
-is the Windows disk, reached through a slow translation layer --
-TopFD/TopPIC run much slower there. For a long run, suggest working in a
+**Where the data is -- always its own line in the plan.** Under WSL, a
+path on `/mnt/<drive>/` is the Windows disk, reached through a slow
+translation layer -- TopFD/TopPIC run much slower there. Noting
+"data on /mnt/d" in the machine summary isn't enough (agents have done
+that twice and moved on). For a long run, suggest working in a
 folder on the Linux filesystem instead (e.g. `~/toprepo_runs/<run_name>/`
 -- note the project folder itself may be on `/mnt/<drive>/` too, check
 with `pwd`) and copying the results back afterwards; say why, and let the
@@ -49,7 +51,9 @@ halve `-u` and tell the user. When a real run's peak memory is known
 (`/usr/bin/time -v <command>` reports "Maximum resident set size"),
 replace this paragraph with the measured number.
 
-**One job at a time by default.** Run several files of the same step one
+**One job at a time by default** (`code.py` also queues heavy
+background jobs -- TopFD, TopPIC, msconvert, TD-Pred -- so a second one
+waits for the first; plan the order yourself regardless). Run several files of the same step one
 after another, each with the full thread count. Two jobs at once, each
 with `-u <cores - 1>`, oversubscribe the CPU and run no faster -- and
 two TopPIC runs against the same FASTA also compete for its
@@ -61,7 +65,9 @@ split the cores between them (e.g. two jobs on 16 cores: `-u 7` each).
 In the plan, one line per long-running step, with the evidence:
 
 ```
-Machine: 16 cores, 31 GB free, no GPU, data on /mnt/d (WSL)
+Machine: 16 cores, 31 GB free, no GPU
+Data:   on /mnt/d (WSL, slow) -> suggest working in ~/toprepo_runs/st_test/,
+        copying results back to runs/st_test/ -- your call
 TopFD:  -u 15, st_1 then st_2 (one at a time)
 TopPIC: -u 15, st_1 then st_2
 ```

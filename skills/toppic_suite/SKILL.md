@@ -319,7 +319,10 @@ consistently for the whole dataset.
 
 **Resolving `<ms_dir>`**: don't assume a name -- check first. If the user
 already has a folder for this dataset (they mentioned a path, or one
-already exists with matching files in it), use that. Otherwise this is
+already exists with matching files in it), use that. **`uploads/` is never
+that folder** -- it's where the web UI drops every uploaded file, for all
+datasets alike; copy the inputs from there into `<ms_dir>` and work there
+(an agent once wrote a whole run's output into `uploads/`). Otherwise this is
 `runs/<run_name>/01_toppic_suite/` -- see `skills/_shared/run_layout.md`
 for what `<run_name>` is, the full `runs/` layout, and the `run_log.txt`
 convention (append a line there when you create `<ms_dir>` for the first
@@ -450,10 +453,12 @@ task has completed and passed the output check in step 2.
 sample prep -- see `param_precedents`, "Deciding `-f`"). Run TopFD as
 usual first; the trials reuse its output.
 
-1. **Pick the trial input.** Up to ~3,000 MS2 spectra: use one whole
-   `_ms2.msalign` file. Larger: take one file (for a multi-file dataset,
-   one or two typical files -- not every file) and keep every k-th
-   spectrum, with k = total / 1,000 rounded up:
+1. **Pick the trial input: one file.** Every file of a dataset shares
+   one sample prep, so one file decides `-f` for all of them -- don't
+   trial each file. Candidates: `none` and C57; add C58 only if
+   iodoacetic acid is plausible. Up to ~3,000 MS2 spectra: use the whole
+   `_ms2.msalign`. Larger: keep every k-th spectrum, with k = total /
+   1,000 rounded up:
    ```
    grep -c '^BEGIN IONS' <input>_ms2.msalign          # total
    awk -v k=<k> '/^BEGIN IONS/{n++; keep=((n-1)%k==0)} n==0||keep' \
@@ -483,8 +488,17 @@ usual first; the trials reuse its output.
    the plan, e.g. "`-f` C57 -- trial on 1,000 spectra of st_1: C57 401
    PrSMs vs none 312; 38 vs 9 Cys-containing proteoforms", and put the
    same line in `run_log.txt`.
+5. **Don't redo the winner.** A trial on a whole file used the real
+   run's flags, so the winning trial's output *is* that file's result --
+   move it into `<ms_dir>` instead of running it again. Then run only the
+   remaining files with the chosen `-f`. (A trial on a subset of spectra
+   is just a test: run that file in full afterwards.) For st_1/st_2 that
+   is 3 TopPIC runs in total -- st_1 none, st_1 C57, st_2 with the
+   winner -- not 2 files x 3 candidates + 2 reruns.
 
-**Several input files: one TopPIC run at a time** (same for TopFD), each
+**Several input files: one TopPIC run at a time** (same for TopFD;
+`code.py` now queues heavy background jobs, so submitting a second one
+just waits -- but plan them in order anyway, and say so), each
 with the full `-u`. Two at once oversubscribe the CPU, and two TopPIC runs
 against the same FASTA also compete for its `<database>.fasta_idx/`
 index -- on this project that left two single-threaded runs crawling for
