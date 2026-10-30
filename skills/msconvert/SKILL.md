@@ -65,6 +65,10 @@ aren't supported yet.**
 
 ## Before You Start
 
+**Check the machine first**: `skills/_shared/hardware_check.md` step 1 (mainly
+free disk space -- an mzML is often several times the size of its raw
+file).
+
 **Plan, then confirm.** Tell the user which files you'll convert, the
 output format and filters (and where they came from: the user, or which
 pipeline's row above), and the output folder. Wait for confirmation.

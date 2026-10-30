@@ -172,6 +172,14 @@ This is exactly the column set `td_pred.py --input` expects -- most
 often you'll run this on a val-split `.msalign` file to build the
 prediction input for that held-out set.
 
+It leaves out spectra `td_pred.py` can't predict, and prints how many
+were skipped and why: no `DATABASE_SEQUENCE` (unidentified -- verified
+to crash `td_pred.py`), a sequence longer than `--max-length` (default
+200, which `td_pred.py` hardcodes), a residue letter the model has no
+mass for, or a missing precursor charge/activation/instrument. Report
+the `Wrote N of M scans` line and the skip counts to the user; if most
+spectra were skipped, stop and show them before predicting.
+
 Write the output TSV to the same `<val_dir>` used for `--val-file-dir`
 above (e.g. `<val_dir>/<name>_scans.tsv`), so the test split and the
 scan TSV built from it stay together.
