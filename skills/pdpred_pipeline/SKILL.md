@@ -94,8 +94,13 @@ State the recommended values, then ask whether the user wants to keep
 them or change any before you run, and confirm back any changed value
 before using it.
 
+**Check the Python packages before the first step**:
+`python3 -c "import torch, torchinfo, h5py, numpy, pandas"`. They aren't
+in the project's `requirements.txt` (torch's build depends on the
+machine's GPU), so a fresh setup won't have them.
+
 **Report before installing something new or touching a script.** The
-`torch`/`torchinfo`/`h5py`/`numpy` this pipeline needs are assumed already
+`torch`/`torchinfo`/`h5py`/`numpy`/`pandas` this pipeline needs are assumed already
 installed, since this is the user's own TD-Pred code. If a run turns up a
 missing or wrong-version package, or if fixing something means editing a
 file under `scripts/`, stop and tell the user exactly what went wrong and
@@ -229,10 +234,34 @@ python skills/pdpred_pipeline/scripts/td_pred.py \
     2>&1 | tee <predict_dir>/predict.log
 ```
 
+The converter in a) leaves out spectra `td_pred.py` would crash on (no
+sequence, longer than 200, unknown residue, missing metadata) and prints
+the counts -- pass them on to the user.
+
 `<val_dir>` here is the same directory `ms_process` resolved for the scan
 TSV -- reuse it rather than picking a new one. The predicted spectra and
 this run's log go to `<predict_dir>`, resolved the same way as `<train_dir>`
 above.
+
+### Predict only -- with an existing model, no training
+
+When the user wants predictions but no training (e.g. "use the backbone
+model to predict these"), skip steps 1-2:
+
+1. **The model**: a checkpoint trained with `--target charge` (what
+   `td_pred.py` expects). The published one is TD-Pred's backbone model,
+   `td_pred_backbone_model_1.2.1.pth`, which TD-Pred's own README uses
+   with `td_pred.py`. It's on the TD-Pred authors' Box share,
+   https://tulane.box.com/s/6pam0vzs618044vbt2y8bjuavxzl7fsn -- ask the
+   user to download it and give you the path; don't look for another
+   copy or substitute another `.pth` from that share without asking
+   (the purpose of the "simplified" model there isn't documented).
+2. **The input**: the TopRepo-annotated `.msalign` (from
+   `toprepo_pipeline`). No split is needed when nothing is trained --
+   predict on the whole file unless the user wants a subset.
+3. Run step 3 a) on that file, then 3 b) with `--model <path to the
+   .pth>`, into a `<predict_dir>` named for the model (e.g.
+   `.../predict/backbone_1.2.1/`).
 
 ## Anti-Patterns
 
