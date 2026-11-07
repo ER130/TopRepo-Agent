@@ -70,6 +70,11 @@ Planning, long-running commands and reporting follow `pipeline_common`
 (loaded with this skill). From the machine check, free disk space matters
 most: an mzML is often several times the size of its raw file.
 
+**Run steps 1 and 2 first, before writing the plan** -- they only look.
+If msconvert can't be used here, the user should hear it right away, not
+after confirming a plan: reply with step 1's or step 2's message instead
+of a plan, and wait.
+
 The plan names the files to convert, the output format and filters (and
 where they came from: the user, or which pipeline's row above), and the
 output folder:
@@ -90,10 +95,18 @@ output folder:
 grep -qi microsoft /proc/version && echo WSL
 ```
 
-No `WSL` -> Mac/Linux, not supported yet. Ask the user to convert on a
-Windows PC with MSConvertGUI using the settings you worked out above, and
-give you the output file. For TopFD that means: output format mzML, add
-the **Peak Picking** filter (algorithm: vendor, MS levels: 1-).
+No `WSL` -> Mac/Linux, not supported yet. Tell the user, in their
+language, along these lines:
+
+> Converting vendor raw files needs ProteoWizard's msconvert, which only
+> runs on Windows -- this machine is macOS/Linux.
+> - Convert it on a Windows PC with MSConvertGUI: output format **mzML**,
+>   add the **Peak Picking** filter (algorithm: vendor, MS levels: 1-).
+> - Then give me the `.mzML` file instead of the raw file, and I'll
+>   continue from there.
+
+(The format and filter are for TopFD; for another purpose, use the
+settings you worked out above.)
 
 ### 2. Find msconvert.exe
 
@@ -107,11 +120,20 @@ The second location is where the ProteoWizard installer puts a per-user
 install by default. If several versions are listed, use the newest (the
 version number is in the folder name).
 
-**Nothing found** -> stop. Tell the user to install ProteoWizard (Windows
-64-bit) from https://proteowizard.sourceforge.io/download.html, and wait
-until they say it's done. **Never download or install it yourself**: the
-installer asks the user to accept the instrument vendors' licenses. If
-they say it's installed somewhere else, ask for the path.
+**Nothing found** -> stop and tell the user, in their language, along
+these lines:
+
+> To convert the raw file I need ProteoWizard (msconvert) -- I checked,
+> and it isn't installed on this computer's Windows yet.
+> - Download: https://proteowizard.sourceforge.io/download.html -- pick
+>   the Windows 64-bit version, install it, and tell me when it's done.
+> - Or, if you'd rather not install it, give me a centroided `.mzML` file
+>   instead of the raw file; that skips the conversion step.
+
+Then wait. **Never download or install it yourself**: the installer asks
+the user to accept the instrument vendors' licenses. If they say it's
+installed somewhere else, ask for the path. If they send an mzML instead,
+run step 4's check on it before handing it to `toppic_suite`.
 
 Then confirm it runs and see which options this version has:
 

@@ -63,8 +63,9 @@ previous stage's output check first.
    goes in the plan as the run's first step: `toppic_suite`'s install
    flow (with the user's two root steps), Python packages into the
    project's `.venv` (`pipeline_common`, "Python packages" -- including
-   which `torch` build). msconvert missing -> the user installs
-   ProteoWizard before the run can start.
+   which `torch` build). msconvert missing -> send `msconvert`'s step-2
+   message (install ProteoWizard, or provide a centroided mzML instead)
+   before the plan; the run can't start until one of the two is done.
 4. **Look up the inputs once**:
    `python3 skills/param_precedents/scripts/lookup_file.py <every input file>`.
    A hit gives `<dataset_id>` (stage 3), `-f` (stage 2), and the
