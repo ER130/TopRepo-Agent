@@ -41,10 +41,20 @@ Planning, Mode A/B, long-running commands and reporting follow
 `pipeline_common` (loaded with this skill). This skill adds the TD-Pred
 specifics.
 
-**The device matters most here**: training uses a GPU if PyTorch sees
-one and falls back to CPU otherwise, which is far slower. The plan says
-which device training will use, and on CPU proposes timing one epoch
-before committing to many.
+**Before the plan, check** (read-only; `pipeline_common`, "Check first"):
+- Python packages: `python3 -c "import torch, torchinfo, h5py, numpy, pandas"`.
+  Missing ones become the plan's first step, `torch` matching the GPU
+  (`pipeline_common`, "Python packages").
+- The device: `python3 -c "import torch; print(torch.cuda.is_available())"`.
+  Training on CPU is far slower: the plan says which device, and on CPU
+  proposes timing one epoch before committing to many.
+- Training: `ms_process`'s split files exist and aren't empty, and the
+  longest sequence, for `--max_length`:
+  `grep '^DATABASE_SEQUENCE=' <file> | awk '{print length($0) - 18}' | sort -n | tail -1`.
+- Predict only, or fine-tuning: the model file exists. None yet -> ask
+  for it instead of a plan ("Predict only" below says where it comes from).
+- Prediction input: a TopRepo-annotated msalign (`DATABASE_SEQUENCE=`
+  lines present).
 
 ### Parameters to recommend (Mode B)
 
@@ -72,10 +82,6 @@ Even in Mode A, check the input's longest `DATABASE_SEQUENCE` against
   dataset/species and fits the intended `--target`; recommend training
   from scratch only when none does.
 
-**Check the Python packages before the first step**:
-`python3 -c "import torch, torchinfo, h5py, numpy, pandas"`. Missing ones
-go into the project's `.venv` as `pipeline_common`, "Python packages"
-says -- for training, `torch` must match the GPU from the hardware check.
 A script change the user approves also gets an entry in `UPSTREAM.md`.
 
 ## Pipeline

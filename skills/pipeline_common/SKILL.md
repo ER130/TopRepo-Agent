@@ -16,9 +16,22 @@ adds only its own parameters and steps.
 
 ## Before running anything
 
-**Check the machine** before the plan: `skills/_shared/hardware_check.md`
-step 1, and put its results in the plan next to the values chosen from
-them (threads, device, where the data is). Folders and `run_log.txt`:
+**Check first, plan second.** Before asking Mode A/B or writing a plan,
+run the read-only checks -- they change nothing, so they need no
+confirmation:
+1. The machine: `skills/_shared/hardware_check.md` step 1. Its results
+   go in the plan next to the values chosen from them (threads, device,
+   where the data is).
+2. The stage skill's **"Before the plan, check"** list: tools installed,
+   Python packages importable, the user's input files present and in the
+   right form.
+
+If something blocks the stage -- a missing tool or input the user has to
+provide -- tell the user right away, instead of a plan: what's missing,
+how to get it (link, command for their own terminal), and any
+alternative (e.g. an mzML instead of a raw file). Then wait. Something
+the agent may fix itself (a pip package, `toppic_suite`'s build) instead
+becomes the plan's first step. Folders and `run_log.txt`:
 `skills/_shared/run_layout.md`.
 
 **Inside a `full_pipeline` run** -- this stage is part of a plan the user

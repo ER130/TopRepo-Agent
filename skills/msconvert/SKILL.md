@@ -70,10 +70,11 @@ Planning, long-running commands and reporting follow `pipeline_common`
 (loaded with this skill). From the machine check, free disk space matters
 most: an mzML is often several times the size of its raw file.
 
-**Run steps 1 and 2 first, before writing the plan** -- they only look.
-If msconvert can't be used here, the user should hear it right away, not
-after confirming a plan: reply with step 1's or step 2's message instead
-of a plan, and wait.
+**Before the plan, check** (read-only; `pipeline_common`, "Check first"):
+- Steps 1 and 2 below: Windows (WSL), and `msconvert.exe` found and
+  running. If not, reply with that step's message instead of a plan.
+- The raw files the user named exist (`ls -la`; a Bruker `.d` is a folder).
+- Free disk space where the output goes.
 
 The plan names the files to convert, the output format and filters (and
 where they came from: the user, or which pipeline's row above), and the

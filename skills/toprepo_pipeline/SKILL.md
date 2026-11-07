@@ -60,6 +60,20 @@ this skill's own `scripts/`, the way `strip_toppic_preamble.py` does.
 (`toppic_suite`). This skill starts once mzML + msalign + `.feature` +
 TopPIC PrSM TSV exist; without them, run `toppic_suite` first.
 
+## Before the plan, check
+
+Read-only (`pipeline_common`, "Check first"):
+- Python packages: `python3 -c "import pandas, numpy, pyteomics, lxml, torch"`.
+  Missing ones become the plan's first step (Prerequisites).
+- Per input file, `toppic_suite`'s output exists and isn't empty:
+  `<input>.mzML`, `<input>_ms2.msalign`, `<input>_ms2.feature`,
+  `<input>_ms2_toppic_prsm_single.tsv`. Missing -> tell the user which,
+  and that `toppic_suite` comes first.
+- TopPIC found something: `grep -m1 'Number of identified PrSMs' <input>_ms2_toppic_prsm_single.tsv`.
+  0 -> nothing to annotate; tell the user instead of a plan.
+- `<dataset_id>` and step 1.5's 4th argument: the lookups under
+  Parameters below.
+
 ## Parameters to recommend (Mode B)
 
 `<dataset_id>` has no default and is asked about even in Mode A.

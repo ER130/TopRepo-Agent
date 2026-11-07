@@ -58,6 +58,18 @@ skill converts them to centroided mzML first.
 - **Not this skill**: once you have `*_toppic_prsm_single.tsv` and the
   matching mzML/msalign/feature files, move on to `toprepo_pipeline`
 
+## Before the plan, check
+
+Read-only (`pipeline_common`, "Check first"):
+- TopFD/TopPIC installed: Prerequisites step 1. Not installed -> the
+  install flow becomes the plan's first part; say up front that it needs
+  the user for two root steps.
+- The input: a centroided mzML with MS2 spectra (`msconvert`'s step-4
+  check). Vendor raw files -> `msconvert` first, with its own checks.
+- The FASTA: exists, isn't empty, starts with `>` (`head -c 200`). None
+  given -> ask for it instead of a plan; never write or download one.
+- `-f`: run `lookup_file.py` on the input now (Parameters below).
+
 ## Parameters to recommend (Mode B)
 
 - `-u` (threads, both tools): the default, 1, is essentially never right.

@@ -55,8 +55,14 @@ below.
 ## Before You Start
 
 Planning, Mode A/B and reporting follow `pipeline_common` (loaded with
-this skill). Whether the splitter does a 2-way or 3-way split depends on
-what's on disk (Tool 1) -- say in the plan which one you expect and why.
+this skill).
+
+**Before the plan, check** (read-only; `pipeline_common`, "Check first"):
+- The input exists and is TopRepo-annotated: `grep -c '^BEGIN IONS' <input>`
+  is above 0 and `grep -m1 '^DATABASE_SEQUENCE=.' <input>` finds a
+  sequence. Not annotated -> `toprepo_pipeline` comes first; tell the user.
+- 2-way or 3-way: whether `<val_dir>/<input>_test<ext>` already exists
+  (Tool 1). Say in the plan which one you expect and why.
 
 ### Parameters to recommend (Mode B)
 
