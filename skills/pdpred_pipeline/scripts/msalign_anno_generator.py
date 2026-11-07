@@ -9,33 +9,49 @@ from torch.utils.data import Dataset
 import model_data as md
 import h5py
 
+TARGET_TYPES = ("pep_bond", "b_y", "charge")
+
+
 class MsalignAnnoBatchGenerator(Dataset):
-    def __init__(self, msalign_file, max_seq_length=200):
+    def __init__(self, msalign_file, max_seq_length=200, target_type="charge"):
         # default parameters
         self.msalign_file = msalign_file
         self.max_seq_length = max_seq_length
-        self.valid_spectra = list(self.read_msalign_iter(msalign_file))
+        if target_type not in TARGET_TYPES:
+            raise ValueError(f"Unknown target type: {target_type}")
+        self.target_type = target_type
+        spectra = list(self.read_msalign_iter(msalign_file))
+        # A sequence longer than max_seq_length can't be encoded (encode_spectrum
+        # and spectrum_anno index past their arrays), so leave it out up front
+        # instead of aborting the whole conversion when it's reached.
+        self.valid_spectra = [s for s in spectra
+                              if len(s["proteoform"]) <= max_seq_length]
+        too_long = len(spectra) - len(self.valid_spectra)
+        if too_long:
+            longest = max(len(s["proteoform"]) for s in spectra)
+            print(f"Skipped {too_long} of {len(spectra)} spectra with a sequence longer "
+                  f"than max_seq_length {max_seq_length} (longest: {longest})")
         print(f"Total spectra: {len(self.valid_spectra)}")
 
     def __len__(self):
         return len(self.valid_spectra)
 
     def __getitem__(self, idx):
+        # Same layout as hdf5_generator.Hdf5BatchGenerator, computed on the fly
         spectrum = self.valid_spectra[idx]
-        
-        # preprocess single spectrum
-        embedding = md.embed_spectrum(spectrum)
-        meta = md.embed_meta(spectrum)
-        mask = md.get_mask(spectrum, self.max_seq_length)    
-        target = self.spectrum_anno_to_b_ion(spectrum)
+        seq_encoding = md.encode_spectrum(spectrum, self.max_seq_length)
+        meta = md.encode_meta(spectrum)
+        mask = md.get_mask(spectrum, self.max_seq_length)
+        charge_mask = md.get_charge_mask(int(spectrum["prec_charge"]))
+        targets = dict(zip(TARGET_TYPES, self.spectrum_anno(spectrum)))
+        target = np.asarray(targets[self.target_type], dtype=np.float32)
 
-        # Convert to PyTorch tensors
-        embedding_tensor = torch.from_numpy(embedding)
-        meta_tensor = torch.from_numpy(meta)
-        mask_tensor = torch.from_numpy(mask)
-        target_tensor = torch.from_numpy(target)
-
-        return (embedding_tensor, meta_tensor, mask_tensor), target_tensor
+        return ((torch.tensor([idx], dtype=torch.int32),
+                 torch.from_numpy(seq_encoding),
+                 torch.from_numpy(meta),
+                 torch.from_numpy(mask),
+                 torch.from_numpy(charge_mask)),
+                torch.from_numpy(target))
 
     def read_msalign_iter(self, fn):
         spectra = self.parse_msalign_annot(fn)

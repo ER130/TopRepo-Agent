@@ -69,8 +69,10 @@ import os
 import random
 import re
 import secrets
+import shlex
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -78,6 +80,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -91,6 +94,7 @@ except ImportError:
     pass
 
 from anthropic import Anthropic
+from anthropic.types import TextBlock
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -165,18 +169,29 @@ class SkillLoader:
                            if isinstance(raw_description, str) else "")
             description = description or body.split("\n", 1)[0]
             description = " ".join(str(description).lstrip("# ").split())
+            requires = metadata.get("requires") or []
             self.skills[name] = {
                 "name": name,
                 "description": description,
                 "content": content,
+                # Skills pinned along with this one (shared rules kept in
+                # one place instead of copied into every stage skill).
+                "requires": [r for r in requires if isinstance(r, str)],
+                # Only ever loaded through another skill's `requires`, so
+                # left out of the catalog and keyword matching.
+                "internal": bool(metadata.get("internal")),
             }
 
+    def public(self) -> dict[str, dict]:
+        return {name: skill for name, skill in self.skills.items()
+                if not skill["internal"]}
+
     def catalog(self) -> str:
-        if not self.skills:
+        if not self.public():
             return "(no skills found)"
         return "\n".join(
             f"- {skill['name']}: {skill['description']}"
-            for skill in self.skills.values()
+            for skill in self.public().values()
         )
 
     def load(self, name: str) -> str:
@@ -195,9 +210,13 @@ class SkillLoader:
         (see pinned_text) for the rest of the session instead."""
         if name not in self.skills:
             return self.load(name)
-        if name not in self.loaded:
-            self.loaded.append(name)
-        return (f"Loaded skill '{name}'. Its full SKILL.md is now in the "
+        added = [dep for dep in self.skills[name]["requires"]
+                 if dep in self.skills and dep not in self.loaded]
+        for skill_name in [*added, name]:
+            if skill_name not in self.loaded:
+                self.loaded.append(skill_name)
+        also = f" (with '{', '.join(added)}')" if added else ""
+        return (f"Loaded skill '{name}'{also}. Its full SKILL.md is now in the "
                 "system prompt under 'Loaded skills' and stays there for "
                 "the rest of this session -- read and follow it there.")
 
@@ -238,7 +257,7 @@ def keyword_skill_matches(query: str, min_score: int = 2, max_items: int = 3) ->
     with hyphens/underscores/spaces all collapsed out, since a skill is
     referred to both ways in the wild ("toppic_suite" the catalog name,
     "toppic-suite" the actual project name in its own description)."""
-    skills = SKILL_LOADER.skills
+    skills = SKILL_LOADER.public()
     if not skills:
         return []
     query_lower = query.lower()
@@ -1544,6 +1563,45 @@ signal.signal(signal.SIGTERM, _handle_termination_signal)
 
 
 FOREGROUND_TIMEOUT = 120
+# A long output keeps its start and, mostly, its end -- where errors,
+# tracebacks and summary lines ("Processed N spectra. Filtered M") are.
+# The full text is saved to a file the agent can grep or tail.
+OUTPUT_HEAD_CHARS = 10000
+OUTPUT_TAIL_CHARS = 40000
+
+
+def head_and_tail(text: str, head: int, tail: int, note: str = "") -> str:
+    if len(text) <= head + tail:
+        return text
+    omitted = len(text) - head - tail
+    return (f"{text[:head]}\n\n[... {omitted} characters omitted{note} ...]\n\n"
+            f"{text[-tail:]}")
+
+
+def command_env() -> dict:
+    """Environment for the agent's shell commands. PYTHONUNBUFFERED keeps
+    a Python script's stdout and stderr in true order. When the agent runs
+    in a virtualenv (the launcher's .venv), that venv goes first on PATH, so
+    `python`, `python3` and `pip` in a command mean the venv -- not the
+    system Python, which Ubuntu 23.04+ won't pip-install into (PEP 668)."""
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    if sys.prefix != sys.base_prefix:
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        env["VIRTUAL_ENV"] = sys.prefix
+    return env
+
+
+def clip_command_output(output: str, head: int = OUTPUT_HEAD_CHARS,
+                        tail: int = OUTPUT_TAIL_CHARS) -> str:
+    if len(output) <= head + tail:
+        return output
+    TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = TOOL_RESULTS_DIR / f"bash_{uuid.uuid4().hex[:12]}.txt"
+    path.write_text(output, encoding="utf-8")
+    # The path goes first, so a later shorter preview still shows it.
+    return (f"[Long output ({len(output)} characters), shortened below; "
+            f"full output: {path}]\n"
+            + head_and_tail(output, head, tail))
 
 
 def _run_bash_process(command: str, cwd: Path | None = None,
@@ -1555,20 +1613,29 @@ def _run_bash_process(command: str, cwd: Path | None = None,
     long jobs need timeout=None (run_in_background), not `&`."""
     process = None
     try:
+        # stderr into the same pipe, so an error shows up where it happened
+        # instead of after all of stdout (see command_env for the rest).
         process = subprocess.Popen(
             command, shell=True, cwd=cwd or WORKDIR,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, errors="replace", start_new_session=True,
+            env=command_env(),
         )
         with _shell_process_lock:
             _shell_processes.add(process)
-        stdout, stderr = process.communicate(timeout=timeout)
-        output = (stdout + stderr).strip()
-        return (output[:50000] if output else "(no output)"), process.returncode
+        output, _ = process.communicate(timeout=timeout)
+        output = clip_command_output(output.strip()) or "(no output)"
+        if process.returncode != 0:
+            output += f"\n[exit code: {process.returncode}]"
+        return output, process.returncode
     except subprocess.TimeoutExpired:
+        _stop_process_group(process)
+        partial, _ = process.communicate()
+        partial = clip_command_output(partial.strip())
         return (f"Error: Timeout ({timeout:g}s) -- the command was killed before "
                 "it finished, so any output files it was writing are incomplete. "
-                "Re-run it with run_in_background: true."), None
+                "Re-run it with run_in_background: true."
+                + (f"\nOutput before it was killed:\n{partial}" if partial else "")), None
     except OSError as e:
         return f"Error: {type(e).__name__}: {e}", None
     finally:
@@ -1870,7 +1937,7 @@ class BackgroundManager:
                 f"  <task_id>{task_id}</task_id>\n"
                 f"  <status>{task['status']}</status>\n"
                 f"  <command>{task['command']}</command>\n"
-                f"  <summary>{result[:500]}</summary>\n"
+                f"  <summary>{clip_command_output(result, 500, 1500)}</summary>\n"
                 f"</task_notification>"
             )
             print(f"  [background] collected {task_id}: {task['status']}")
@@ -1897,8 +1964,12 @@ def inject_background_results(messages: list) -> int:
     notifications = collect_background_results()
     if not notifications:
         return 0
+    _fold_into_user_turn(messages, notifications)
+    return len(notifications)
 
-    blocks = [{"type": "text", "text": item} for item in notifications]
+
+def _fold_into_user_turn(messages: list, texts: list[str]):
+    blocks = [{"type": "text", "text": item} for item in texts]
     if messages and messages[-1].get("role") == "user":
         content = messages[-1].get("content", "")
         if isinstance(content, list):
@@ -1907,7 +1978,37 @@ def inject_background_results(messages: list) -> int:
             messages[-1]["content"] = [{"type": "text", "text": str(content)}, *blocks]
     else:
         messages.append({"role": "user", "content": blocks})
-    return len(notifications)
+
+
+# -- Upload notices --
+#
+# server.py's upload endpoint can fire mid-turn, between an assistant
+# tool_use and its tool_result. Writing to session_history right then
+# breaks that pairing, and every later API call on this history fails.
+# Notices wait here instead and join the history only where the last
+# exchange is complete: before a new user message, or before a model call.
+
+_upload_notices: list[str] = []
+_upload_lock = threading.Lock()
+
+
+def queue_upload_notice(text: str):
+    with _upload_lock:
+        _upload_notices.append(text)
+
+
+def take_upload_notices() -> list[str]:
+    with _upload_lock:
+        notices = _upload_notices[:]
+        _upload_notices.clear()
+    return notices
+
+
+def inject_upload_notices(messages: list) -> int:
+    notices = take_upload_notices()
+    if notices:
+        _fold_into_user_turn(messages, notices)
+    return len(notices)
 
 
 # -- Cron scheduler --
@@ -2665,10 +2766,7 @@ class TeammateRuntime:
         with team_lock:
             active_teammates[self.name] = "working"
         try:
-            response = client.messages.create(
-                model=MODEL, system=self.system, messages=self.messages,
-                tools=TEAMMATE_TOOLS, max_tokens=8000,
-            )
+            response = call_model(self.system, self.messages, TEAMMATE_TOOLS)
         except Exception as e:
             BUS.send(self.name, "lead", f"{type(e).__name__}: {e}", "error")
             return "stop"
@@ -2677,8 +2775,12 @@ class TeammateRuntime:
         tool_calls = [block for block in response.content if block.type == "tool_use"]
         if tool_calls:
             results = []
+            cut_call_id = cut_tool_call_id(response)
             for block in tool_calls:
-                output = _run_teammate_tool(self.name, block, self.handlers)
+                if block.id == cut_call_id:
+                    output = TRUNCATED_TOOL_RESULT
+                else:
+                    output = _run_teammate_tool(self.name, block, self.handlers)
                 results.append({"type": "tool_result", "tool_use_id": block.id,
                                 "content": output})
             self.messages.append({"role": "user", "content": results})
@@ -3027,11 +3129,37 @@ def trigger_hooks(event: str, *args, skip_permission: bool = False):
     return None
 
 
-DENY_LIST = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", "dd if="]
+# Whole-word patterns, not substrings: "rm -rf /" as a substring also
+# refused `rm -rf /tmp/x`, and "rm " flagged any `confirm `/`perform `.
+DENY_PATTERNS = {
+    "rm -rf /": re.compile(
+        r"(?:^|[;&|()\n])\s*rm\s+(?:-\S+\s+)*-\S*[rR]\S*\s+(?:-\S+\s+)*"
+        r"(?:/\*?|~/?|\$HOME/?)(?=\s|$|[;&|)])"
+    ),
+    "sudo": re.compile(r"(?<![\w-])sudo(?![\w-])"),
+    "shutdown": re.compile(r"(?<![\w-])(?:shutdown|reboot)(?![\w-])"),
+    "mkfs": re.compile(r"(?<![\w-])mkfs(?:\.\w+)?(?![\w-])"),
+    "dd if=": re.compile(r"(?<![\w-])dd\s+if="),
+}
 DESTRUCTIVE_COMMAND_WORD = re.compile(
     r"(?i)(?:^|[;&|()\n])\s*(?:rm|del)(?=\s|$|[;&|()])"
 )
-DESTRUCTIVE = ["rm ", "> /etc/", "chmod 777"]
+# Other ways to delete that a plain `rm` check misses -- the first thing
+# an agent reaches for once `rm` is refused.
+DESTRUCTIVE_OTHER = re.compile(
+    r"\s-delete\b|-exec\s+rm\b|\bxargs\s+(?:-\S+\s+)*rm\b"
+    r"|\bshutil\.rmtree\b|\bos\.(?:remove|unlink|rmdir)\b|\.unlink\("
+)
+DESTRUCTIVE = ["> /etc/", "chmod 777"]
+
+# `rm` of a run's own intermediate files needs no approval: deleting a
+# killed run's partial output or a stale `<database>.fasta_idx/` is a step
+# the pipeline skills ask for. Only plain `cd`/`rm` chains whose targets
+# all sit inside a stage folder (runs/<run>/<stage>/...) qualify; deleting
+# a whole run, or anything the parser can't follow, still asks.
+RUNS_DIR_NAME = "runs"
+SHELL_UNPARSEABLE = re.compile(r"[$`|<>\n]|(?<!&)&(?!&)")
+GLOB_CHARS = re.compile(r"[*?\[]")
 
 # A heredoc landing in a data-shaped file is the exact pattern behind two
 # real incidents this project hit: a hand-typed combined_info.tsv row and
@@ -3046,14 +3174,80 @@ DATA_FILE_REDIRECT = re.compile(
 
 
 def contains_destructive_command(command: str) -> bool:
-    return bool(DESTRUCTIVE_COMMAND_WORD.search(command))
+    return bool(DESTRUCTIVE_COMMAND_WORD.search(command)
+                or DESTRUCTIVE_OTHER.search(command))
+
+
+def _inside_stage_folder(path: Path, runs_dir: Path, min_parts: int) -> bool:
+    try:
+        relative = path.resolve().relative_to(runs_dir.resolve())
+    except ValueError:
+        return False
+    return len(relative.parts) >= min_parts
+
+
+def is_run_output_cleanup(command: str, cwd: Path | None = None) -> bool:
+    """True when the command is only `cd`s, `rm`s and harmless commands,
+    and every `rm` target lies inside a stage folder under runs/."""
+    if SHELL_UNPARSEABLE.search(command):
+        return False
+    base = (cwd or WORKDIR)
+    runs_dir = base / RUNS_DIR_NAME
+    current = base
+    saw_rm = False
+    for segment in re.split(r"&&|;", command):
+        try:
+            words = shlex.split(segment)
+        except ValueError:
+            return False
+        if not words:
+            continue
+        if words[0] == "cd":
+            if len(words) != 2 or words[1].startswith("~"):
+                return False
+            current = current / words[1]
+            continue
+        if words[0] in ("pushd", "popd"):
+            return False
+        if words[0] != "rm":
+            if contains_destructive_command(segment):
+                return False
+            continue
+        saw_rm = True
+        targets = [w for w in words[1:] if not w.startswith("-")]
+        if not targets:
+            return False
+        for target in targets:
+            if target.startswith("~"):
+                return False
+            path = current / target
+            if GLOB_CHARS.search(target):
+                # Check the folder the pattern expands in, one level up.
+                parts = path.parts
+                first_glob = next(i for i, part in enumerate(parts)
+                                  if GLOB_CHARS.search(part))
+                if not _inside_stage_folder(Path(*parts[:first_glob]), runs_dir, 2):
+                    return False
+            elif not _inside_stage_folder(path, runs_dir, 3):
+                return False
+    return saw_rm
 
 
 def looks_like_fabricated_data_write(command: str) -> bool:
     return bool(HEREDOC_MARKER.search(command) and DATA_FILE_REDIRECT.search(command))
 
 
+# A front end that can ask the user from any thread (server.py's approval
+# cards) sets this to a callable (block, reason) -> bool. Left as None, only
+# the terminal on the main thread can ask.
+PERMISSION_PROMPTER = None
+
+
 def request_permission(block, reason: str) -> str | None:
+    if PERMISSION_PROMPTER is not None:
+        if PERMISSION_PROMPTER(block, reason):
+            return None
+        return "Permission denied by user"
     # A cron-triggered turn or a teammate thread has no terminal to prompt
     # on; input() there would either block forever or race the real
     # interactive prompt for stdin, so a background thread fails closed.
@@ -3069,15 +3263,18 @@ def request_permission(block, reason: str) -> str | None:
     return None
 
 
-def check_permission(block, prompt_user: bool = True) -> str | None:
+def check_permission(block, prompt_user: bool = True,
+                     cwd: Path | None = None) -> str | None:
     """Shared by the Lead's interactive hook and a teammate's dispatcher
     (which passes prompt_user=False so it never touches input())."""
     if block.name == "bash":
         command = block.input.get("command", "")
-        for pattern in DENY_LIST:
-            if pattern in command:
-                print(f"\n\033[31m[blocked] '{pattern}'\033[0m")
+        for name, pattern in DENY_PATTERNS.items():
+            if pattern.search(command):
+                print(f"\n\033[31m[blocked] '{name}'\033[0m")
                 return "Permission denied by deny list"
+        if is_run_output_cleanup(command, cwd):
+            return None
         if contains_destructive_command(command) or any(
             keyword in command for keyword in DESTRUCTIVE
         ):
@@ -3120,7 +3317,8 @@ def check_permission(block, prompt_user: bool = True) -> str | None:
 
 def permission_hook(block):
     """PreToolUse: block denied operations and ask about risky ones."""
-    return check_permission(block, prompt_user=True)
+    cwd, _error = _agent_cwd()
+    return check_permission(block, prompt_user=True, cwd=cwd)
 
 
 def log_hook(block):
@@ -3291,13 +3489,16 @@ class ContextCompactor:
         if saved_path:
             path = Path(saved_path)
             try:
-                with path.open(encoding="utf-8") as saved:
-                    preview = saved.read(preview_chars)
+                text = path.read_text(encoding="utf-8")
             except OSError:
-                preview = output[:preview_chars]
+                text = output
         else:
             path = self.save_output(tool_use_id, output)
-            preview = output[:preview_chars]
+            text = output
+        # Start and end, not just the start: errors and summary lines are
+        # usually at the end.
+        half = preview_chars // 2
+        preview = head_and_tail(text, half, preview_chars - half)
         return (f"<persisted-output>\nFull output: {path}\n"
                 f"Preview:\n{preview}\n</persisted-output>")
 
@@ -3471,6 +3672,80 @@ class ContextCompactor:
 COMPACTOR = ContextCompactor(client, MODEL, TRANSCRIPT_DIR, TOOL_RESULTS_DIR)
 MAX_REACTIVE_RETRIES = 1
 
+# Output length per model call. A reply that hits it ends with
+# stop_reason "max_tokens", cut off mid-sentence or mid tool call.
+MAX_TOKENS = 8000
+# One retry for a cut-off tool call. The SDK refuses non-streaming
+# requests whose max_tokens implies over 10 minutes (~21,333 tokens), and
+# a few older models refuse anything over 8,192.
+RETRY_MAX_TOKENS = 16000
+MAX_CONTINUATIONS = 3
+CONTINUE_PROMPT = (
+    "[System: your previous reply hit the output length limit and was cut "
+    "off. Continue exactly where it stopped -- don't repeat what you "
+    "already wrote.]"
+)
+TRUNCATED_TOOL_RESULT = (
+    "Error: this tool call was cut off by the output length limit, so its "
+    "input is incomplete and it was NOT run. Split the work into smaller "
+    "calls -- e.g. write a long file in parts (write the first part, then "
+    "add the rest with edit_file) -- and try again."
+)
+
+
+def cut_tool_call_id(response) -> str | None:
+    """The id of the final tool call if the reply was cut off inside it."""
+    if response.stop_reason != "max_tokens" or not response.content:
+        return None
+    last = response.content[-1]
+    return last.id if last.type == "tool_use" else None
+
+
+def call_model(system, messages: list, tools: list, record=None):
+    """client.messages.create, plus handling for a reply cut off by the
+    output length limit:
+    - inside a tool call: its input is incomplete, so retry once with
+      RETRY_MAX_TOKENS. If it's still cut off, the caller must not run it
+      (cut_tool_call_id names it; answer it with TRUNCATED_TOOL_RESULT).
+    - in plain text: ask the model to continue, up to MAX_CONTINUATIONS
+      times, and return the pieces joined as one reply -- so the history
+      and the user see one complete message, not the first fragment."""
+    def create(max_tokens: int, msgs: list):
+        response = client.messages.create(
+            model=MODEL, system=system, messages=msgs,
+            tools=tools, max_tokens=max_tokens,
+        )
+        if record:
+            record(response.usage)
+        return response
+
+    response = create(MAX_TOKENS, messages)
+    if cut_tool_call_id(response):
+        print(f"[cut-off tool call] retrying with max_tokens={RETRY_MAX_TOKENS}")
+        try:
+            response = create(RETRY_MAX_TOKENS, messages)
+        except ValueError:
+            pass  # this model's non-streaming limit is lower
+    content = list(response.content)
+    for _ in range(MAX_CONTINUATIONS):
+        if response.stop_reason != "max_tokens" or cut_tool_call_id(response):
+            break
+        print("[cut-off reply] asking the model to continue")
+        response = create(MAX_TOKENS, [
+            *messages,
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": CONTINUE_PROMPT},
+        ])
+        piece = list(response.content)
+        if (content and piece and content[-1].type == "text"
+                and piece[0].type == "text"):
+            # Rejoin the sentence the limit split in two.
+            content[-1] = TextBlock(type="text",
+                                    text=content[-1].text + piece.pop(0).text)
+        content += piece
+    return SimpleNamespace(content=content, stop_reason=response.stop_reason,
+                           usage=response.usage)
+
 
 # -- Agent loop --
 
@@ -3495,17 +3770,14 @@ def agent_loop(messages: list, active_request: str):
             messages.append({"role": "user", "content": format_team_events(team_events)})
 
         inject_background_results(messages)
+        inject_upload_notices(messages)
         messages[:] = COMPACTOR.prepare(messages, active_request)
         # Rebuilt every call: a load_skill in the previous step pins a
         # skill into it.
         system = build_system(relevant_memories)
         try:
-            response = client.messages.create(
-                model=MODEL, system=system,
-                messages=with_cache_breakpoint(messages),
-                tools=TOOLS, max_tokens=8000,
-            )
-            USAGE.record(response.usage)
+            response = call_model(system, with_cache_breakpoint(messages),
+                                  TOOLS, record=USAGE.record)
             reactive_retries = 0
         except Exception as e:
             too_long = any(text in str(e).lower()
@@ -3539,9 +3811,12 @@ def agent_loop(messages: list, active_request: str):
 
         results = []
         compact_requested = False
+        cut_call_id = cut_tool_call_id(response)
         for block in tool_calls:
             print(f"\033[36m> {block.name}\033[0m")
-            if block.name == "compact":
+            if block.id == cut_call_id:
+                output = TRUNCATED_TOOL_RESULT
+            elif block.name == "compact":
                 output = "Compaction requested after this tool batch."
                 compact_requested = True
             else:
@@ -3623,7 +3898,14 @@ def run_agent_turn_locked(user_query: str | None = None):
                 f"instructions, even if the request otherwise reads as small "
                 f"or you already know roughly how the underlying tool works.]"
             )
-        session_history.append({"role": "user", "content": user_query})
+        # Files uploaded while idle go first, in the same user message, so
+        # the request reads in the order things happened.
+        notices = take_upload_notices()
+        content = user_query if not notices else [
+            *({"type": "text", "text": notice} for notice in notices),
+            {"type": "text", "text": user_query},
+        ]
+        session_history.append({"role": "user", "content": content})
     agent_loop(session_history, user_query or "")
     print_latest_assistant_text(session_history)
     print()

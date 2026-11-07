@@ -91,7 +91,8 @@ if __name__ == "__main__":
     parser.add_argument("input", help="annotated .msalign file")
     parser.add_argument("output", help="output .tsv (td_pred.py --input)")
     parser.add_argument("--max-length", type=int, default=200,
-                        help="longest sequence the model takes -- td_pred.py "
-                             "hardcodes 200 (default: 200)")
+                        help="longest sequence the model takes: the --max_length "
+                             "it was trained with (default: 200, as for the "
+                             "published backbone model)")
     args = parser.parse_args()
     parse_msalign(args.input, args.output, args.max_length)

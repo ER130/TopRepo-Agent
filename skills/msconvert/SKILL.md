@@ -15,6 +15,7 @@ description: |
   (3) supply an mzML and you're about to run TopFD on it
   Keywords: raw, .raw, .d, .wiff, msconvert, MSConvertGUI, ProteoWizard,
   mzML, mzXML, MGF, centroid, peak picking, profile, vendor format, convert
+requires: [pipeline_common]
 ---
 
 # msconvert (vendor raw -> open formats)
@@ -65,13 +66,13 @@ aren't supported yet.**
 
 ## Before You Start
 
-**Check the machine first**: `skills/_shared/hardware_check.md` step 1 (mainly
-free disk space -- an mzML is often several times the size of its raw
-file).
+Planning, long-running commands and reporting follow `pipeline_common`
+(loaded with this skill). From the machine check, free disk space matters
+most: an mzML is often several times the size of its raw file.
 
-**Plan, then confirm.** Tell the user which files you'll convert, the
-output format and filters (and where they came from: the user, or which
-pipeline's row above), and the output folder. Wait for confirmation.
+The plan names the files to convert, the output format and filters (and
+where they came from: the user, or which pipeline's row above), and the
+output folder:
 
 - **Output folder**: if it's for a pipeline, use that pipeline's input
   folder -- for `toppic_suite`, its `<ms_dir>` (by default
@@ -137,11 +138,9 @@ General form:
 - A Bruker `.d` folder is passed the same way as a file.
 - The output is named after the input (`<input>.mzML`, ...).
 
-Run it **with the bash tool's `run_in_background: true`**, no `&` or
-`nohup` -- a real raw file takes minutes, and a normal bash call is
-killed after 120s. One file per call, one after another, not all at
-once. Wait for the background task's `completed` notification before
-checking the output.
+Run it in the background (`pipeline_common`) -- a real raw file takes
+minutes. One file per call, one after another: files converted at once
+compete for disk and memory, and a failure is harder to pin down.
 
 ### 4. Check the output
 
@@ -169,18 +168,15 @@ Per file: the exact command you ran, the output path and size, and the
 check results. If msconvert failed, quote its error output and stop --
 don't hand a missing or partial file to the next step.
 
-## Anti-Patterns
+## Checklist before each conversion
 
-| Pattern | Problem | Fix |
-|---|---|---|
-| Picking a format/filters yourself when the user named neither a format nor a pipeline | It may not be what they need | Ask what the file is for |
-| Converting for TopFD without `peakPicking vendor msLevel=1-`, or with it not first | Profile mzML, which TopFD handles poorly | Use the table's row; peakPicking first |
-| Passing an mzML the user supplied straight to TopFD | It may be profile, or have no MS2 | Run step 4's check first |
-| Writing msconvert options from memory | Options differ between versions | Read `msconvert.exe --help` first |
-| Downloading or installing ProteoWizard for the user | The installer requires the user to accept the vendors' licenses | Give them the link and wait |
-| Passing Linux paths (`/mnt/d/...`) to `msconvert.exe` | It's a Windows program and expects `D:\...` | `wslpath -w` on every path |
-| Running the conversion as a normal bash call, or with `&`/`nohup` | Killed after 120s, or when the call returns, leaving a partial file | `run_in_background: true`, plain command |
-| Converting several raw files at once | They compete for disk and memory, and a failure is harder to pin down | One after another |
+- Format and filters from the user or the pipeline table -- otherwise ask.
+- For TopFD: `peakPicking vendor msLevel=1-`, as the first filter.
+- Options from this version's `msconvert.exe --help`; every path through
+  `wslpath -w`.
+- In the background, one file at a time; step 4's check before handing
+  the file on (also for an mzML the user supplied).
+- ProteoWizard missing -> the user installs it; never you.
 
 ## Resources
 

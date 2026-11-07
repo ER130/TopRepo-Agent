@@ -60,7 +60,7 @@ _log_cond = threading.Condition(_log_lock)
 _next_id = 1
 
 
-def _append_display(role: str, text: str) -> dict:
+def _append_display(role: str, text: str, **extra) -> dict:
     global _next_id
     with _log_cond:
         entry = {
@@ -68,6 +68,7 @@ def _append_display(role: str, text: str) -> dict:
             "role": role,
             "text": text,
             "ts": datetime.now().isoformat(timespec="seconds"),
+            **extra,
         }
         _next_id += 1
         DISPLAY_LOG.append(entry)
@@ -85,6 +86,51 @@ def _on_turn_complete(messages: list):
 
 
 agent_core.register_hook("TurnComplete", _on_turn_complete)
+
+
+# -- Approvals: the web version of the terminal's "Allow? [y/N]" --
+#
+# code.py calls PERMISSION_PROMPTER from whichever thread is running the
+# turn (a chat request, or an autonomous turn woken by a finished
+# background job). It posts an "approval" entry to DISPLAY_LOG, which the
+# page renders as a card with Approve/Deny buttons, and blocks until
+# /api/approve answers it. An unanswered card is denied after
+# APPROVAL_TIMEOUT_SECONDS, so a turn waiting on a closed tab can't hold
+# agent_lock -- and keep the idle watchdog from ever stopping -- forever.
+
+APPROVAL_TIMEOUT_SECONDS = 10 * 60
+
+_pending_approvals: dict[str, dict] = {}
+_approvals_lock = threading.Lock()
+
+
+def _approval_detail(block) -> str:
+    if block.name == "bash":
+        return block.input.get("command", "")
+    return f"{block.name}: {block.input.get('path', '')}"
+
+
+def _web_prompter(block, reason: str) -> bool:
+    approval_id = uuid.uuid4().hex[:12]
+    pending = {"event": threading.Event(), "approved": False}
+    with _approvals_lock:
+        _pending_approvals[approval_id] = pending
+    _append_display("approval", reason, approval_id=approval_id,
+                    detail=_approval_detail(block))
+    answered = pending["event"].wait(APPROVAL_TIMEOUT_SECONDS)
+    with _approvals_lock:
+        _pending_approvals.pop(approval_id, None)
+    approved = answered and pending["approved"]
+    if answered:
+        note = "Approved." if approved else "Denied."
+    else:
+        note = (f"No answer in {APPROVAL_TIMEOUT_SECONDS // 60} minutes "
+                "-- denied.")
+    _append_display("system", note, resolves=approval_id, approved=approved)
+    return approved
+
+
+agent_core.PERMISSION_PROMPTER = _web_prompter
 
 
 # -- Idle auto-stop + manual stop --
@@ -175,13 +221,9 @@ def chat(req: ChatRequest):
         start_id = DISPLAY_LOG[-1]["id"] if DISPLAY_LOG else 0
     _append_display("user", text)
 
-    # Runs on a FastAPI thread-pool thread, never the process's literal
-    # main thread -- so a destructive-command or fabricated-data-write
-    # permission check (see code.py's request_permission) fails closed
-    # with a plain denial message instead of blocking on input() with no
-    # terminal to read from. Same fail-closed behavior cron/teammate
-    # turns already rely on; the web UI has no approve/deny flow yet, so
-    # anything that would need one is simply refused rather than hanging.
+    # A permission check during this turn blocks here until the user
+    # answers its approval card (see _web_prompter); the page keeps
+    # long-polling /api/history meanwhile, which is how the card arrives.
     try:
         with agent_core.agent_lock:
             agent_core.run_agent_turn_locked(text)
@@ -210,15 +252,31 @@ def upload(file: UploadFile = File(...)):
             out.write(chunk)
 
     rel = dest.relative_to(agent_core.WORKDIR)
-    # Drop a note straight into session_history (not just DISPLAY_LOG) so
-    # the agent already knows this file exists on its very next turn,
-    # the same way a background-task result or cron firing gets injected
-    # -- the user shouldn't have to repeat the path back to it.
-    agent_core.session_history.append(
-        {"role": "user", "content": f"[Uploaded file] {dest}"}
-    )
+    # Queue a note for the agent (not just DISPLAY_LOG) so it knows this
+    # file exists without the user repeating the path. Queued rather than
+    # appended to session_history: a turn may be mid tool call right now,
+    # and a message between its tool_use and tool_result breaks the
+    # history for every later API call (see code.py's upload notices).
+    agent_core.queue_upload_notice(f"[Uploaded file] {dest}")
     entry = _append_display("system", f"\U0001F4CE Uploaded: {safe_name} → {rel}")
     return {"items": [entry], "path": str(dest)}
+
+
+class ApprovalAnswer(BaseModel):
+    approval_id: str
+    approve: bool
+
+
+@app.post("/api/approve")
+def approve(req: ApprovalAnswer):
+    with _approvals_lock:
+        pending = _pending_approvals.get(req.approval_id)
+        if pending is None or pending["event"].is_set():
+            raise HTTPException(status_code=404,
+                                detail="no such pending approval")
+        pending["approved"] = req.approve
+        pending["event"].set()
+    return {"status": "ok"}
 
 
 @app.get("/api/history")

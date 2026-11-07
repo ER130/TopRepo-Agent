@@ -8,6 +8,7 @@ description: |
   (2) want predicted top-down spectra for given proteoform sequences
   (3) ask to prepare/convert MS data for top-down spectral prediction
   Keywords: PDpred, TD-Pred, top-down, spectral prediction, proteoform, train, checkpoint, hdf5
+requires: [pipeline_common]
 ---
 
 # PDpred (TD-Pred) Pipeline
@@ -19,7 +20,8 @@ description: |
 Every step below calls the user's own already-tested TD-Pred code as a
 subprocess via `bash`. This skill includes the right order to run things in, which flags
 matter, and where the sharp edges are. All scripts live
-in `scripts/`.
+in `scripts/` -- a copy of https://github.com/toppic-suite/td-pred with
+local fixes, all listed in `skills/pdpred_pipeline/UPSTREAM.md`.
 
 The input MS file should has already been processed(by TopRepo) and
 is annotated per spectrum: `BEGIN IONS ... END IONS` blocks. If it hasn't
@@ -35,49 +37,29 @@ been -- no `DATABASE_SEQUENCE` on the spectra yet -- that's the
 
 ## Before You Start
 
-**Check the machine first**: read `skills/_shared/hardware_check.md` and run
-its step-1 commands. Above all, whether there's a GPU: training picks a
-GPU automatically if PyTorch sees one and falls back to CPU otherwise,
-which is far slower. The plan says which device training will use, and on
-CPU proposes timing one epoch before committing to many.
+Planning, Mode A/B, long-running commands and reporting follow
+`pipeline_common` (loaded with this skill). This skill adds the TD-Pred
+specifics.
 
-**Plan first, then confirm.** Before running anything below, lay out the
-plan -- which step(s), against which files, which `--target` and
-`--max_length`, whether this is a from-scratch train or a fine-tune -- and
-wait for the user to confirm it before executing. A wrong `--target` in
-particular only shows up as a shape mismatch much later (see Anti-Patterns);
-catching it in the plan is a lot cheaper than after a training run.
+**The device matters most here**: training uses a GPU if PyTorch sees
+one and falls back to CPU otherwise, which is far slower. The plan says
+which device training will use, and on CPU proposes timing one epoch
+before committing to many.
 
-**Ask which mode before writing the plan: A (quick) or B (detailed).**
-Check this session's conversation so far for an earlier answer first --
-if the user already picked a mode earlier in this same session, reuse it
-without asking again; a new session (e.g. the user closed and reopened
-the agent) has no earlier answer to find, so ask fresh. Mode A: a concise
-plan -- which step(s), against which files, nothing else. Mode B: the
-detailed plan below, with parameter values and why. Wait for the answer
-before writing the plan either way.
+### Parameters to recommend (Mode B)
 
-**Mode A still means reasoning through each value, just not displaying
-it.** Work out the same recommended values as Mode B below before you
-actually run anything -- in particular still check the input's longest
-`DATABASE_SEQUENCE` against `--max_length`, and still pick `--target`
-based on what the checkpoint is for, rather than letting the script's
-defaults run unexamined just because Mode A's plan doesn't spell it out.
+Even in Mode A, check the input's longest `DATABASE_SEQUENCE` against
+`--max_length` and pick `--target` by what the checkpoint is for.
 
-**In Mode B, reason about each parameter and recommend a value -- don't
-just restate the default.**
-
-- `--max_length`: the default is 200, but check the actual input's
-  longest `DATABASE_SEQUENCE` first (see step 1's caveat below) -- a
-  longer proteoform than `--max_length` isn't skipped, it raises an
-  `IndexError` and aborts the conversion partway through. Recommend 200
-  only once you've confirmed it covers the data; otherwise recommend
-  raising it to cover the longest sequence and say by how much.
-- `--target`: the script's default is `pep_bond`, but recommend `charge`
-  whenever the checkpoint being trained is meant for step 3b's
-  `td_pred.py` (which hardcodes a `charge`-shaped output and can't use a
-  `pep_bond`/`b_y` checkpoint) -- ask what the checkpoint is for before
-  defaulting to `pep_bond`, don't let the script's default decide it.
+- `--max_length`: the default is 200. Check the input's longest
+  `DATABASE_SEQUENCE` first: spectra with a longer one are left out of
+  the HDF5 file (step 1 prints how many). If that's more than a few,
+  recommend raising `--max_length` to cover them and say by how much --
+  `td_pred.py` reads it from the checkpoint, so prediction follows.
+- `--target`: the default, `charge`, is the only target `td_pred.py`
+  (step 3b) can predict with. Recommend `pep_bond` or `b_y` only when the
+  user wants a checkpoint for something other than `td_pred.py`, and say
+  that it then can't be used for step 3b.
 - If the training data comes from (or resembles) the TopRepo corpus,
   check the `param_precedents` skill for the source dataset's
   dissociation method before training. TD-Pred's own training data was
@@ -90,31 +72,17 @@ just restate the default.**
   dataset/species and fits the intended `--target`; recommend training
   from scratch only when none does.
 
-State the recommended values, then ask whether the user wants to keep
-them or change any before you run, and confirm back any changed value
-before using it.
-
 **Check the Python packages before the first step**:
-`python3 -c "import torch, torchinfo, h5py, numpy, pandas"`. They aren't
-in the project's `requirements.txt` (torch's build depends on the
-machine's GPU), so a fresh setup won't have them.
-
-**Report before installing something new or touching a script.** The
-`torch`/`torchinfo`/`h5py`/`numpy`/`pandas` this pipeline needs are assumed already
-installed, since this is the user's own TD-Pred code. If a run turns up a
-missing or wrong-version package, or if fixing something means editing a
-file under `scripts/`, stop and tell the user exactly what went wrong and
-what you're about to do about it. Wait for their response before
-continuing.
+`python3 -c "import torch, torchinfo, h5py, numpy, pandas"`. Missing ones
+go into the project's `.venv` as `pipeline_common`, "Python packages"
+says -- for training, `torch` must match the GPU from the hardware check.
+A script change the user approves also gets an entry in `UPSTREAM.md`.
 
 ## Pipeline
 
-**Run every step below with the bash tool's `run_in_background: true`.**
-A normal bash call is killed after 120s, which training always exceeds
-and HDF5 conversion or prediction on a real dataset usually does. Don't
-add `&` or `nohup` -- the call's process group is killed when it returns.
-If a result says `Error: Timeout`, the step died partway: its output
-file is incomplete, so re-run it in the background rather than using it.
+Every step runs in the background (`pipeline_common`): training always
+takes longer than a normal bash call's 120 s, and HDF5 conversion or
+prediction on a real dataset usually does.
 
 Give training and prediction runs their own folders, referred to below as
 `<train_dir>` and `<predict_dir>` -- point each step's `--out`/`--output`
@@ -142,12 +110,12 @@ checkpoint used, etc).
 ### 1. Convert each split to HDF5
 
 ```
-python skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
+python3 skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
     --msalign <split_out_dir>/<name>_train.msalign \
     --out <split_out_dir>/train.h5 \
     --max_length 200
 
-python skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
+python3 skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
     --msalign <split_out_dir>/<name>_val.msalign \
     --out <split_out_dir>/val.h5 \
     --max_length 200
@@ -155,23 +123,17 @@ python skills/pdpred_pipeline/scripts/msalign_anno_to_hdf5.py \
 
 `--max_length` must match what you'll pass to `train_td_pred.py` in the
 next step -- it fixes the model's input/output shapes, and the HDF5
-file's stored arrays won't match a differently-shaped model. Same
-caveat in reverse: `td_pred.py` (step 3b) has no `--max_length` flag at
-all -- it hardcodes 200 -- so a checkpoint trained with any other
-`--max_length` can't be used for prediction without also editing
-`td_pred.py`. Also note `encode_spectrum`/`spectrum_anno` in
-`model_data.py` don't skip or truncate a proteoform longer than
-`--max_length`, they raise an `IndexError` and abort the whole
-conversion partway through -- check the input's longest
-`DATABASE_SEQUENCE` against `--max_length` first if you're working with
-a new species/dataset.
+file's stored arrays won't match a differently-shaped model. Spectra
+whose `DATABASE_SEQUENCE` is longer than `--max_length` are left out;
+the conversion prints `Skipped N of M spectra ... (longest: L)` --
+report that line.
 
 ### 2. Train / fine-tune
 
 ```
 mkdir -p <train_dir>
 
-python skills/pdpred_pipeline/scripts/train_td_pred.py \
+python3 skills/pdpred_pipeline/scripts/train_td_pred.py \
     --train <split_out_dir>/train.h5 \
     --validate <split_out_dir>/val.h5 \
     --out <train_dir>/checkpoint.pth \
@@ -179,38 +141,22 @@ python skills/pdpred_pipeline/scripts/train_td_pred.py \
     2>&1 | tee <train_dir>/train.log
 ```
 
-- `--target` is `pep_bond` (default), `b_y`, or `charge`. **If this
-  checkpoint is meant for step 3b's `td_pred.py`, you must pass
-  `--target charge` explicitly** -- the default (`pep_bond`) trains a
-  checkpoint `td_pred.py` can't use (it hardcodes `output_dim=60`,
-  i.e. a `charge`-target shape), and there's no error at training
-  time to warn you, only a shape mismatch later when you try to
-  predict with it. This has already happened once on this project:
-  a `pep_bond`-target checkpoint got trained (5 epochs) and never
-  used, because `--target` wasn't set.
+- `--target` is `charge` (default), `pep_bond`, or `b_y`. Only a
+  `charge` checkpoint works with step 3b's `td_pred.py`; each
+  checkpoint records its `target` and `max_length`, and `td_pred.py`
+  stops with a clear error on any other target.
 - To fine-tune from an existing checkpoint instead of training from
-  scratch, add `--load_model <path/to/checkpoint>`. Its `--target`
-  (and therefore output shape) must match what you're training now --
-  `load_state_dict` will raise on a mismatch rather than silently
-  loading wrong weights.
+  scratch, add `--load_model <path/to/checkpoint>`. Its `--target` and
+  `--max_length` must match this run's -- the script stops with an
+  error naming the mismatch.
 - Validation runs automatically every epoch -- no separate evaluate
   script exists. Each epoch prints train/val loss and cosine
   similarity (captured in `train.log` above via `tee`), and saves
-  `<out>_<epoch>`, i.e. `<train_dir>/checkpoint.pth_<epoch>`.
-  Final checkpoint after all epochs: `checkpoint.pth_final`. One
-  exception to the "everything lands in the run folder" rule:
-  `similarity_<epoch>.tsv` is hardcoded to write to the process's
-  current working directory, not next to `--out` -- collect it
-  afterward with `mv similarity_*.tsv <train_dir>/` (from wherever you
-  ran the command).
-- The "Output shape ... (expected: ...)" sanity-check line printed
-  before training starts is misleading for `b_y`/`charge` targets: it
-  prints `output_len` alone, not `output_len * output_dim`, so for
-  `--target charge` it'll say "expected (4, 199)" next to an actual
-  shape of `(4, 11940)`. That's a cosmetic bug in the script, not a
-  real mismatch -- ignore it.
+  `<out>_<epoch>`, i.e. `<train_dir>/checkpoint.pth_<epoch>`, plus
+  `similarity_<epoch>.tsv` (per-spectrum validation similarity) in the
+  same folder. Final checkpoint after all epochs: `checkpoint.pth_final`.
 - Multi-GPU: `torchrun --nproc_per_node=N skills/pdpred_pipeline/scripts/train_td_pred.py ...`
-  instead of `python ...`, same `--out`/`tee` pattern as above.
+  instead of `python3 ...`, same `--out`/`tee` pattern as above.
 
 ### 3. Predict
 
@@ -220,23 +166,26 @@ python skills/pdpred_pipeline/scripts/train_td_pred.py \
 #    exists -- use that for a genuinely held-out evaluation (val gets looked at
 #    every epoch during training, so it's not fully unseen). Otherwise use the
 #    val split -- check <val_dir> before assuming which one you have.
-python skills/ms_process/scripts/convert_msalign_to_tsv.py \
+python3 skills/ms_process/scripts/convert_msalign_to_tsv.py \
     <split_out_dir>/<name>_val.msalign \
     <val_dir>/<name>_scans.tsv
 
 # b) predict spectra for every row in that TSV using a trained checkpoint
 mkdir -p <predict_dir>
 
-python skills/pdpred_pipeline/scripts/td_pred.py \
+python3 skills/pdpred_pipeline/scripts/td_pred.py \
     --input <val_dir>/<name>_scans.tsv \
     --model <train_dir>/checkpoint.pth_final \
     --output <predict_dir>/<name>_predictions.msalign \
     2>&1 | tee <predict_dir>/predict.log
 ```
 
-The converter in a) leaves out spectra `td_pred.py` would crash on (no
-sequence, longer than 200, unknown residue, missing metadata) and prints
-the counts -- pass them on to the user.
+The converter in a) leaves out spectra `td_pred.py` can't predict (no
+sequence, longer than `--max-length`, unknown residue, missing metadata)
+and prints the counts -- pass them on to the user. For a checkpoint
+trained with a `--max_length` other than 200, pass the same value to the
+converter's `--max-length`; `td_pred.py` itself reads it from the
+checkpoint.
 
 `<val_dir>` here is the same directory `ms_process` resolved for the scan
 TSV -- reuse it rather than picking a new one. The predicted spectra and
@@ -256,6 +205,8 @@ model to predict these"), skip steps 1-2:
    user to download it and give you the path; don't look for another
    copy or substitute another `.pth` from that share without asking
    (the purpose of the "simplified" model there isn't documented).
+   It doesn't record its target or `max_length`; `td_pred.py` treats
+   such checkpoints as `charge` / 200.
 2. **The input**: the TopRepo-annotated `.msalign` (from
    `toprepo_pipeline`). No split is needed when nothing is trained --
    predict on the whole file unless the user wants a subset.
@@ -267,31 +218,28 @@ model to predict these"), skip steps 1-2:
 
 | Pattern | Problem | Fix |
 |---|---|---|
-| Passing `.msalign` paths to `--train`/`--validate` | The flags default to `.mgf`-looking names but the script actually loads HDF5 via `hdf5_generator.Hdf5BatchGenerator` -- msalign paths fail | Always convert to `.h5` first (step 2), pass those paths |
-| Training without `--target charge` when the checkpoint is meant for prediction | `td_pred.py` hardcodes `output_dim=60`, i.e. assumes a `charge`-target checkpoint; the default `pep_bond` (or `b_y`) checkpoint's shape won't match, and nothing warns you until you try to predict | Confirm the intended `--target` before running step 2; if a checkpoint wasn't trained with `charge` and someone wants to run step 3b with it, say so rather than running -- don't write a workaround script without flagging it first |
+| Passing `.msalign` paths to `--train`/`--validate` | The script loads HDF5 via `hdf5_generator.Hdf5BatchGenerator` -- msalign paths fail | Always convert to `.h5` first (step 1), pass those paths |
+| Training with `--target pep_bond`/`b_y` when the checkpoint is meant for prediction | `td_pred.py` only predicts with a `charge` checkpoint (it stops with an error on others) | Keep the default `charge` unless the checkpoint is for something else; if someone wants step 3b with a non-`charge` checkpoint, say so rather than writing a workaround |
 | Assuming "just evaluate this checkpoint on this val set" has a dedicated script | It doesn't -- validation is built into `train_td_pred.py`'s training loop, there's no standalone eval mode | Say so rather than guessing; offer to write a thin eval-only script (reusing the validation-phase logic already in `train_td_pred.py`) if the user wants one |
 | Assuming "run the pipeline" means all 3 steps | The user may only want one step (e.g. just predict with an existing checkpoint) | Confirm which step(s) before running anything |
 | Copying scripts elsewhere, or `cd`-ing into a different directory first | All scripts use flat sibling imports (e.g. `import model_data as md`) that rely on Python adding the invoked script's own directory to `sys.path` | Always invoke by full path under `skills/pdpred_pipeline/scripts/` |
 | Launching a full training run without warning the user | Can take hours, and a normal bash call is killed at 120s | Confirm epoch count/expected runtime first, then run it with `run_in_background: true` (not `&`) |
-| Running step 1 on a new species/dataset without checking sequence lengths | `encode_spectrum`/`spectrum_anno` raise `IndexError` and abort partway through the file if any `DATABASE_SEQUENCE` is longer than `--max_length` -- you lose the whole run, not just that one spectrum | Check the input's longest `DATABASE_SEQUENCE` against `--max_length` before running, or raise `--max_length` to cover it |
+| Running step 1 on a new species/dataset without checking sequence lengths | Spectra longer than `--max_length` are left out of training; if many are, the model never sees that part of the data | Check the input's longest `DATABASE_SEQUENCE` against `--max_length` before running, and report step 1's `Skipped N of M` line |
+| Editing a file under `scripts/` without recording it | `scripts/` is a copy of upstream TD-Pred; an unrecorded change is lost or conflicts on the next re-sync | Ask first (Before You Start), then add the change to `UPSTREAM.md` |
 | Writing a checkpoint/log/prediction straight to the project root or scattering runs across ad-hoc paths | Runs from different datasets/species pile up ungrouped -- hard to find or compare later | Resolve `<train_dir>`/`<predict_dir>` once per run (see Pipeline above), `mkdir -p` it first, and point `--out`/`--output` and the log `tee` at it |
-| Restating `--max_length`/`--target`'s script default in the plan without checking the actual input or what the checkpoint is for | A restated default isn't a recommendation; a wrong `--target` in particular only surfaces as a shape mismatch much later, after a training run already happened | Check the input's longest `DATABASE_SEQUENCE` and the checkpoint's intended use first, recommend accordingly, flag when it differs from the default |
 
 ## Resources
 
 **Implementation** (all under `scripts/`):
 - `msalign_anno_to_hdf5.py` + `msalign_anno_generator.py` -- msalign to
-  HDF5 (step 1). Only `MsalignAnnoBatchGenerator.__init__` and
-  `.convert_anno_msalign_to_hdf5()` are used/working -- its
-  `__getitem__` (the on-the-fly `torch.utils.data.Dataset` path) calls
-  `md.embed_spectrum`/`md.embed_meta`/`self.spectrum_anno_to_b_ion`,
-  none of which exist (the real methods are `md.encode_spectrum`,
-  `md.encode_meta`, `self.spectrum_anno`). Don't wire this class
-  directly into a `DataLoader` -- it'll crash immediately.
+  HDF5 (step 1). `MsalignAnnoBatchGenerator` can also feed a
+  `DataLoader` directly (same layout as the HDF5 dataset), but the
+  training script reads HDF5.
 - `train_td_pred.py` + `td_pred_model.py` + `hdf5_generator.py` --
   training/fine-tuning (step 2)
 - `td_pred.py` -- inference against a `charge`-target checkpoint (step 3b)
 - `model_data.py` -- shared encoding helpers used by all of the above
+- `UPSTREAM.md` -- where `scripts/` comes from and every local change
 
 **Related skill**:
 - `ms_process` -- splitting and the TSV converter (step 3a) live there,

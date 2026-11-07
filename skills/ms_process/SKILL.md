@@ -12,6 +12,7 @@ description: |
       data yet
   (4) need a TSV of scan metadata from an msalign file (e.g. to run td_pred.py)
   Keywords: split, train val test, msalign, proteoform, TD-Pred, PDpred, group split, tsv, convert
+requires: [pipeline_common]
 ---
 
 # MS Process
@@ -53,38 +54,18 @@ below.
 
 ## Before You Start
 
-**Plan first, then confirm.** Before running either tool, lay out the
-plan -- which one, against which input file, what ratio/group-field --
-and wait for the user to confirm it before executing. Whether you get a
-2-way or 3-way split depends on state on disk (see the Anti-Patterns
-table), so say which one you expect and why before running, not just
-after.
+Planning, Mode A/B and reporting follow `pipeline_common` (loaded with
+this skill). Whether the splitter does a 2-way or 3-way split depends on
+what's on disk (Tool 1) -- say in the plan which one you expect and why.
 
-**Ask which mode before writing the plan: A (quick) or B (detailed).**
-Check this session's conversation so far for an earlier answer first --
-if the user already picked a mode earlier in this same session, reuse it
-without asking again; a new session (e.g. the user closed and reopened
-the agent) has no earlier answer to find, so ask fresh. Mode A: a concise
-plan -- which tool, against which file, nothing else. Mode B: the
-detailed plan below, with parameter values and why. Wait for the answer
-before writing the plan either way.
+### Parameters to recommend (Mode B)
 
-**Mode A still means reasoning through each value, just not displaying
-it.** Work out the same recommended values as Mode B below before you
-actually run anything -- in particular still check `--group-field`
-against the real file headers rather than running with the script's
-`PROTEOFORM_ID` default just because Mode A's plan doesn't spell it out.
+Even in Mode A, check `--group-field` against the input's real headers.
 
-**In Mode B, reason about each parameter and recommend a value -- don't
-just restate the script's default.**
-
-- `--group-field`: the script's own default is `PROTEOFORM_ID`, but check
-  the actual input file's headers -- TopRepo-annotated files carry
-  `DATABASE_SEQUENCE` instead, so recommend that rather than the script's
-  default (left alone, it would silently group by a field this project's
-  files don't populate the way it expects). Recommend the protein
-  accession field instead only if the user actually wants protein-level,
-  not proteoform-level, splitting.
+- `--group-field`: the default, `DATABASE_SEQUENCE`, is the proteoform
+  sequence TopRepo writes into each spectrum -- check the input's headers
+  have it. Recommend `PROTEIN_ACCESSION` instead only if the user
+  actually wants protein-level, not proteoform-level, splitting.
 - `--seed`: 42 is an arbitrary convention, not a value worth re-deriving --
   recommend keeping it unless the user wants multiple independent splits
   to compare, in which case recommend a different seed per split and say so.
@@ -99,16 +80,10 @@ just restate the script's default.**
   compensation voltage) -- flag this to the user before splitting, since
   it may affect what they consider a genuinely held-out group.
 
-State which case (2-way vs 3-way, per the check above) applies before
-recommending a ratio. Ask whether the user wants to keep these recommended
-values or change any before you run, and confirm back any changed value
-before using it.
-
-**Report before touching a script.** Neither tool has external
-dependencies to install, but if a fix means editing something under
-`scripts/`, stop and tell the user exactly what's wrong and what you're
-about to change before doing it. Wait for their response before
-continuing.
+Recommend a ratio only after stating which case (2-way vs 3-way)
+applies. Neither tool needs anything installed. `convert_msalign_to_tsv.py`
+comes from upstream TD-Pred: record any change to it in
+`skills/pdpred_pipeline/UPSTREAM.md`.
 
 ## Tool 1: split_ms_file.py
 
@@ -117,7 +92,7 @@ delimiter (`BEGIN SPECTRUM/END SPECTRUM`, `BEGIN IONS/END IONS`, or
 `BEGIN PRSM/END PRSM`).
 
 ```
-python skills/ms_process/scripts/split_ms_file.py \
+python3 skills/ms_process/scripts/split_ms_file.py \
     --input <full_annotated_file> \
     --group-field DATABASE_SEQUENCE \
     --seed 42 \
@@ -137,24 +112,15 @@ happens automatically, no flag needed to choose):
   the next run against the same input finds it and takes the 2-way
   path.
 
-`--group-field DATABASE_SEQUENCE` -- the script's own default is
-`PROTEOFORM_ID`, but TopRepo files actually use `DATABASE_SEQUENCE`
-(holds the full proteoform sequence). Check the field name against the
-actual file headers before running on a new species/dataset -- it may
-differ. For protein-level splitting instead, use the protein accession
-field.
+`--group-field DATABASE_SEQUENCE` (the default) holds the full
+proteoform sequence in TopRepo-annotated files. For protein-level
+splitting, use `PROTEIN_ACCESSION`. If no spectrum has the field, the
+script stops before writing anything and lists the fields it did find.
 
-**Known quirk**: spectra that weren't identified have an empty
-`DATABASE_SEQUENCE` and all get grouped into one giant bucket. The
-splitter assigns groups by target spectrum count (greedy, largest
-group first), so this bucket lands wherever is furthest below its
-target at that point -- normally train, since it usually has the
-largest target -- and the realized spectrum-count ratio stays close
-to the requested ratio despite the one oversized group. Only worry if
-this single bucket alone is bigger than a whole split's target (that
-split will still overshoot); check the printed spectrum counts, which
-is what the splitter actually optimizes for. (These unidentified
-spectra get dropped later by `msalign_anno_to_hdf5.py` anyway.)
+Spectra with an empty `DATABASE_SEQUENCE` (not identified) are left out
+of the split and counted in the `[warn] N / M spectra had no ... field`
+line -- they'd be dropped later by `msalign_anno_to_hdf5.py` anyway.
+Report that line; if N is most of M, check the file before going on.
 
 ## Tool 2: convert_msalign_to_tsv.py
 
@@ -162,7 +128,7 @@ spectra get dropped later by `msalign_anno_to_hdf5.py` anyway.)
 extraction, no grouping decision involved.
 
 ```
-python skills/ms_process/scripts/convert_msalign_to_tsv.py <input>.msalign <scans>.tsv
+python3 skills/ms_process/scripts/convert_msalign_to_tsv.py <input>.msalign <scans>.tsv
 ```
 
 Pulls one row per spectrum with `DATASET_ID`, `MZML_FILE_NAME`,
@@ -208,7 +174,6 @@ noting which tool/ratio/input was used.
 | Assuming it's always a 2-way train/val split | Whether you get 2-way or 3-way depends on whether `<input>_test<ext>` already exists in `--val-file-dir` -- easy to miss on a first run | Read the "Found existing test set" / "No existing test set" line the script prints; don't assume from the command alone |
 | Copying either script elsewhere before running it | Meant to be invoked from its own path so the loader can find it consistently | Always call `skills/ms_process/scripts/<name>.py` in place |
 | Writing the scans TSV to a random/temp path instead of alongside the split it came from | Makes it hard to find later | Write next to `<val_dir>` (see Tool 2 above); resolve that path once, don't scatter outputs |
-| Restating a flag's script default in the plan without checking it against the actual input file or dataset size | A restated default isn't a recommendation, and the script's own default (`PROTEOFORM_ID`) is usually wrong for this project's files | Check the real headers/dataset size first, recommend accordingly, flag when it differs from the default |
 
 ## Resources
 

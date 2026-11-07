@@ -72,7 +72,7 @@ def load_datasets(train_file, val_file, target_type="pep_bond"):
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs=1,
                 learning_rate=0.0003, device='cpu', model_file="model.hdf",
-                use_amp=True, train_sampler=None):
+                use_amp=True, train_sampler=None, model_info=None):
     start_time = time.time()
 
     model.to(device)
@@ -194,7 +194,9 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs=1,
                   f"Validation Cosine Similarity: {avg_val_similarity:.6f}, "
                   f"Time: {epoch_duration:.2f}s")
 
-            similarity_filename = "similarity_" + str(epoch+1) + ".tsv"
+            # Next to the checkpoints, not in whatever directory this was run from
+            similarity_filename = os.path.join(
+                os.path.dirname(model_file) or ".", "similarity_" + str(epoch+1) + ".tsv")
             with open(similarity_filename, 'w') as f:
                 f.write("spectrum_id\tsimilarity\n")
                 all_ids  = torch.cat(val_spectrum_id_list)
@@ -210,6 +212,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs=1,
                 'train_similarities': train_similarities,
                 'val_losses': val_losses,
                 'val_similarities': val_similarities,
+                **(model_info or {}),
             }, model_file + "_" + str(epoch+1))
 
         if avg_val_similarity > best_val_similarity:
@@ -238,15 +241,16 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs=1,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train",      type=str,   default="hcd_train_dataset.mgf",      help="train data filename")
-    parser.add_argument("--validate",   type=str,   default="hcd_validation_dataset.mgf", help="validation data filename")
+    parser.add_argument("--train",      type=str,   required=True, help="training data: HDF5 file from msalign_anno_to_hdf5.py")
+    parser.add_argument("--validate",   type=str,   required=True, help="validation data: HDF5 file from msalign_anno_to_hdf5.py")
     parser.add_argument("--out",        type=str,   default="pred_full_torch_model.pth",  help="filename to save the trained model")
     parser.add_argument("--batch",      type=int,   default=32,    help="Batch size")
     parser.add_argument("--epochs",     type=int,   default=50,    help="Number of epochs")
     parser.add_argument("--lr",         type=float, default=0.0003,help="Learning rate")
     parser.add_argument("--load_model", type=str,   default=None,  help="Path to presaved model to load")
     parser.add_argument("--max_length", type=int,   default=200,   help="Length of input sequences (default: 200)")
-    parser.add_argument("--target",     type=str,   default="pep_bond", help="Target type: pep_bond or b_y or charge")
+    parser.add_argument("--target",     type=str,   default="charge", choices=["pep_bond", "b_y", "charge"],
+                        help="Target type (default: charge -- the only one td_pred.py can predict with)")
     parser.add_argument("--seed",       type=int,   default=42,    help="Seed")
     parser.add_argument("--no_amp",     action="store_true", help="Disable automatic mixed precision")
     parser.add_argument("--deterministic", action="store_true",
@@ -282,22 +286,28 @@ def main():
         output_dim = 1
     elif args.target == "b_y":
         output_dim = 2
-    elif args.target == "charge":
+    else:  # charge
         output_dim = md.get_max_fragment_charge() * 2
-    else:
-        print("Using default target: pep_bond")
-        output_dim = 1
 
     single_model = td_pred_model.TransformerSeq2Seq(
         output_len=output_len,
         output_dim=output_dim,
         max_seq_length=args.max_length,
     )
+    # Saved in every checkpoint, so td_pred.py and --load_model can check
+    # what a checkpoint was trained for instead of failing on a shape error.
+    model_info = {'target': args.target, 'max_length': args.max_length}
 
     if args.load_model:
         if is_main_process():
             print(f"Loading presaved model from {args.load_model}")
         checkpoint = torch.load(args.load_model, map_location='cpu')
+        for key, value in model_info.items():
+            if key in checkpoint and checkpoint[key] != value:
+                raise SystemExit(
+                    f"Error: {args.load_model} was trained with --{key} "
+                    f"{checkpoint[key]}, but this run uses --{key} {value}. "
+                    f"Fine-tuning needs the same --{key}.")
         single_model.load_state_dict(checkpoint['model_state_dict'])
         if is_main_process():
             print("Model loaded successfully")
@@ -328,7 +338,8 @@ def main():
         print("seq_encoding_input shape:", seq_enc_in.shape, " meta_input shape:", meta_in.shape)
         with torch.no_grad():
             out = single_model(seq_enc_in, meta_in, mask_in, charge_mask_in)
-        print(f"Output shape: {out.shape}  (expected: ({batch_size}, {single_model.output_len}))")
+        print(f"Output shape: {out.shape}  (expected: ({batch_size}, "
+              f"{single_model.output_len * single_model.output_dim}))")
 
     # ------------------------------------------------------------------ #
     # Data loaders
@@ -375,6 +386,7 @@ def main():
         model_file=args.out,
         use_amp=use_amp,
         train_sampler=train_sampler,
+        model_info=model_info,
     )
 
     # ------------------------------------------------------------------ #
@@ -390,6 +402,7 @@ def main():
             'val_losses': val_losses,
             'val_similarities': val_similarities,
             'training_time': training_time,
+            **model_info,
         }, args.out + "_final")
 
         hours   = int(training_time // 3600)

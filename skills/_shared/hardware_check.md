@@ -21,16 +21,18 @@ df -h <data dir>                        # free disk where outputs will go
 grep -qi microsoft /proc/version && echo WSL
 ```
 
-**Where the data is -- always its own line in the plan.** Under WSL, a
-path on `/mnt/<drive>/` is the Windows disk, reached through a slow
-translation layer -- TopFD/TopPIC run much slower there. Noting
-"data on /mnt/d" in the machine summary isn't enough (agents have done
-that twice and moved on). For a long run, suggest working in a
-folder on the Linux filesystem instead (e.g. `~/toprepo_runs/<run_name>/`
--- note the project folder itself may be on `/mnt/<drive>/` too, check
-with `pwd`) and copying the results back afterwards; say why, and let the
-user decide. (`msconvert` is the exception: it's a Windows
-program and needs its files on `/mnt/<drive>/`.)
+**Where the data is -- always its own line in the plan.** Every stage
+works inside the project's own `runs/<run_name>/` (see `run_layout.md`),
+wherever the project folder is. Don't move a run elsewhere, e.g. to
+`~/...` for speed: the agent's file tools only reach inside the project,
+deleting a stage's partial output outside `runs/` asks the user each
+time, and later stages look for earlier output in `runs/`.
+
+Under WSL, a project on `/mnt/<drive>/` (check with `pwd`) is on the
+Windows disk, which is slower to read and write from WSL -- TopFD on the
+bundled test file took about twice as long there as on the Linux disk;
+the gap on real data hasn't been measured. Say so in the plan as a
+fact about the run, not as a choice to make.
 
 ## 2. Choose resource parameters from the check
 
@@ -66,8 +68,7 @@ In the plan, one line per long-running step, with the evidence:
 
 ```
 Machine: 16 cores, 31 GB free, no GPU
-Data:   on /mnt/d (WSL, slow) -> suggest working in ~/toprepo_runs/st_test/,
-        copying results back to runs/st_test/ -- your call
+Data:   runs/st_test/ in the project, on /mnt/d (Windows disk under WSL, slower I/O)
 TopFD:  -u 15, st_1 then st_2 (one at a time)
 TopPIC: -u 15, st_1 then st_2
 ```

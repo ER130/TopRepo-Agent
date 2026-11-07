@@ -100,6 +100,10 @@ if __name__ == "__main__":
     parser.add_argument("--input", required=True, help="tsv file with sequence and meta information")
     parser.add_argument("--model", required=True, help="model file")
     parser.add_argument("--output", required=True, help="output msalign file")
+    parser.add_argument("--max_length", type=int, default=None,
+                        help="max sequence length the model was trained with. Only needed for "
+                             "checkpoints that don't record it (e.g. the published backbone "
+                             "model); those default to 200")
     args = parser.parse_args()
 
 
@@ -107,9 +111,19 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    output_len = 199  
-    output_dim = 60
-    max_seq_length = 200
+    # Checkpoints from train_td_pred.py record their target and max_length;
+    # older ones (e.g. td_pred_backbone_model_1.2.1.pth) don't, and are charge/200.
+    checkpoint = torch.load(args.model, map_location=device, weights_only=True)
+    target = checkpoint.get('target', 'charge')
+    if target != 'charge':
+        raise SystemExit(f"Error: {args.model} was trained with --target {target}; "
+                         "td_pred.py needs a checkpoint trained with --target charge.")
+    max_seq_length = checkpoint.get('max_length', args.max_length or 200)
+    if args.max_length and args.max_length != max_seq_length:
+        raise SystemExit(f"Error: {args.model} was trained with --max_length "
+                         f"{max_seq_length}, not {args.max_length}.")
+    output_len = max_seq_length - 1
+    output_dim = md.get_max_fragment_charge() * 2
     single_model = td_pred_model.TransformerSeq2Seq(
         output_len=output_len,
         output_dim=output_dim,
@@ -125,8 +139,6 @@ if __name__ == "__main__":
     else:
         model = single_model
 
-    # Load presaved model if specified
-    checkpoint = torch.load(args.model, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint['model_state_dict'])
     print("Model loaded successfully")
 
@@ -137,8 +149,12 @@ if __name__ == "__main__":
 
     df = pandas.read_csv(args.input, sep="\t")
 
+    too_long = 0
     for i in range(len(df)):
         seq = df.loc[i, "DATABASE_SEQUENCE"]
+        if len(seq) > max_seq_length:
+            too_long += 1  # encoding it would index past the model's input
+            continue
         activation = df.loc[i, "ACTIVATION"].lower()
         if (i+1) % 100 == 0:
             print(f"Predicting spectrum {i+1}/{len(df)}: {seq}")
@@ -158,3 +174,7 @@ if __name__ == "__main__":
         peaks = build_predicted_spectrum(seq, activation, pred)
         #print(peaks)
         write_msalign(peaks, spectrum, args.output)
+
+    if too_long:
+        print(f"Skipped {too_long} of {len(df)} sequences longer than {max_seq_length}")
+    print(f"Predicted {len(df) - too_long} spectra -> {args.output}")

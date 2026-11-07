@@ -88,6 +88,25 @@
   .bubble pre { background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
   .bubble pre code { background: none; color: inherit; padding: 0; }
 
+  .row.approval { justify-content: flex-start; }
+  .approval-card {
+    max-width: 78%; padding: 12px 14px; border-radius: 12px;
+    background: #fffbeb; border: 1px solid #fcd34d; font-size: 14px; line-height: 1.5;
+  }
+  .approval-card .reason { font-weight: 600; margin-bottom: 6px; }
+  .approval-card pre {
+    margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: #0f172a; color: #e2e8f0;
+    font-size: 12.5px; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow-y: auto;
+  }
+  .approval-card .actions { display: flex; gap: 8px; align-items: center; }
+  .approval-card button {
+    padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); background: #fff; color: var(--text);
+  }
+  .approval-card button.approve { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .approval-card button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .approval-card .status { color: var(--muted); font-size: 13px; }
+
   .thinking { color: var(--muted); font-size: 13px; font-style: italic; padding: 2px 4px; }
   .thinking::after {
     content: ""; display: inline-block; width: 1em; text-align: left;
@@ -162,10 +181,73 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(html);
 }
 
+// approval_id -> {card, status} for the Approve/Deny cards, so the
+// "Approved."/"Denied." entry that resolves one can close its buttons --
+// including when the whole history is replayed after a page reload.
+const approvalCards = new Map();
+
+function renderApproval(item) {
+  const row = document.createElement("div");
+  row.className = "row approval";
+  const card = document.createElement("div");
+  card.className = "approval-card";
+  const reason = document.createElement("div");
+  reason.className = "reason";
+  reason.textContent = "⚠️ Approval needed: " + item.text;
+  const detail = document.createElement("pre");
+  detail.textContent = item.detail;
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const approveBtn = document.createElement("button");
+  approveBtn.className = "approve";
+  approveBtn.textContent = "Approve";
+  const denyBtn = document.createElement("button");
+  denyBtn.textContent = "Deny";
+  const status = document.createElement("span");
+  status.className = "status";
+  actions.append(approveBtn, denyBtn, status);
+  card.append(reason, detail, actions);
+  row.appendChild(card);
+  approvalCards.set(item.approval_id, { approveBtn, denyBtn, status });
+
+  async function answer(approve) {
+    approveBtn.disabled = denyBtn.disabled = true;
+    status.textContent = "Sending...";
+    try {
+      const res = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approval_id: item.approval_id, approve }),
+      });
+      if (!res.ok) status.textContent = "This request is no longer waiting.";
+    } catch (e) {
+      approveBtn.disabled = denyBtn.disabled = false;
+      status.textContent = "Network error, try again.";
+    }
+  }
+  approveBtn.addEventListener("click", () => answer(true));
+  denyBtn.addEventListener("click", () => answer(false));
+  return row;
+}
+
+function resolveApproval(item) {
+  const card = approvalCards.get(item.resolves);
+  if (!card) return;
+  card.approveBtn.disabled = card.denyBtn.disabled = true;
+  card.status.textContent = item.text;
+}
+
 function renderItem(item) {
   if (renderedIds.has(item.id)) return;
   renderedIds.add(item.id);
   if (item.id > lastId) lastId = item.id;
+
+  if (item.role === "approval") {
+    logEl.appendChild(renderApproval(item));
+    logEl.scrollTop = logEl.scrollHeight;
+    return;
+  }
+  if (item.resolves) resolveApproval(item);
 
   const row = document.createElement("div");
   row.className = "row " + item.role;

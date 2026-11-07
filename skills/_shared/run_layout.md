@@ -47,6 +47,17 @@ A plain shell append is enough -- no JSON, no locking:
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  <skill name>  <summary>" >> runs/<run_name>/run_log.txt
 ```
 
+## Deleting a stage's own files
+
+A plain `rm` (optionally after `cd`) whose targets all sit inside a
+stage folder -- `runs/<run_name>/<stage>/...`, e.g. a killed run's
+partial output or a stale `<database>.fasta_idx/` -- runs without asking
+the user. Anything else that deletes asks for approval first: a whole
+`runs/<run_name>/` or stage folder, a path outside `runs/`, or a command
+`code.py` can't follow (variables, pipes, redirects, `find -delete`,
+`shutil.rmtree`, ...). So when a skill says to delete partial output,
+use a plain `rm` with the real paths.
+
 ## What's NOT here
 
 Each skill still documents, in its own SKILL.md, the parts that are

@@ -62,10 +62,13 @@ def ensure_venv() -> None:
     # readable afterward, same reasoning as webui.log for the server itself.
     with open(SETUP_LOG_FILE, "w", encoding="utf-8") as log:
         subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True, stdout=log, stderr=subprocess.STDOUT)
-        subprocess.run(
-            [str(venv_python()), "-m", "pip", "install", "-r", str(PROJECT_ROOT / "requirements.txt")],
-            check=True, stdout=log, stderr=subprocess.STDOUT,
-        )
+        # The agent's own packages, then the ones the pipeline scripts import
+        # (torch aside -- the agent installs it to match the machine's GPU).
+        for requirements in ("requirements.txt", "requirements-pipeline.txt"):
+            subprocess.run(
+                [str(venv_python()), "-m", "pip", "install", "-r", str(PROJECT_ROOT / requirements)],
+                check=True, stdout=log, stderr=subprocess.STDOUT,
+            )
 
 
 def start_server() -> None:

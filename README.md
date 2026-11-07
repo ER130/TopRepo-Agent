@@ -13,19 +13,35 @@ terminal or through a browser-based chat interface.
 ```
 git clone https://github.com/ER130/TopRepo-Agent.git
 cd TopRepo-Agent
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt -r requirements-pipeline.txt
 cp .env.example .env
 ```
+
+Everything installs into the project's own `.venv`: recent Ubuntu (23.04+)
+refuses `pip install` into the system Python. If `python3 -m venv` fails
+on Ubuntu, install the venv module first: `sudo apt install python3-venv`.
+The web UI launchers below create the same `.venv` on their own.
+`requirements-pipeline.txt` holds the packages the pipeline scripts use;
+`torch` isn't in it -- the agent installs the build that fits your
+machine (GPU or CPU) the first time a step needs it.
 
 Open `.env` and replace the placeholder `ANTHROPIC_API_KEY` with your own
 key from [console.anthropic.com](https://console.anthropic.com/), and set
 `MODEL_ID`. Both are required -- the agent won't start without them.
 
+The agent runs on Linux or macOS only; on Windows it runs inside WSL
+(Ubuntu). TopFD/TopPIC are installed natively the first time you ask for
+them: the agent builds them from the source in `skills/toppic_suite/`,
+and asks you to run the two install steps in your own terminal (the
+dependencies with `sudo apt install` or `brew install`, then
+`sudo make install`). Supported: Ubuntu (including Ubuntu under WSL) and macOS.
+
 ## Running it
 
 **Command line**:
 ```
-python3 code.py
+.venv/bin/python3 code.py
 ```
 
 **Web UI** (a browser chat interface instead of the terminal) -- easiest
@@ -39,13 +55,14 @@ to the chat UI. See `launch/README.md` for details.
 
 Or start it manually instead:
 ```
-uvicorn server:app --host 0.0.0.0 --port 8000
+.venv/bin/python3 -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 then open `http://localhost:8000/`.
 
-Note: in the web UI, a command the agent judges risky is refused
-automatically rather than prompting you to approve it, unlike the
-terminal's `Allow? [y/N]`.
+Note: when the agent wants to run a command that needs your OK (for
+example deleting files outside a run's own folders), the terminal asks
+`Allow? [y/N]` and the web UI shows an Approve/Deny card in the chat. A
+card left unanswered for 10 minutes counts as Deny.
 
 ---
 

@@ -19,7 +19,7 @@ and --group-field explicitly (see --help).
 Usage:
     python split_ms_file.py \
         --input sample_annotated.msalign \
-        --group-field PROTEOFORM_ID \
+        --group-field DATABASE_SEQUENCE \
         --train-ratio 0.8 \
         --seed 42 \
         --output-dir ./split_out
@@ -56,11 +56,30 @@ def parse_blocks(text: str, begin_tag: str, end_tag: str):
 
 
 def extract_field(block: str, field: str):
-    """Matches 'FIELD=value' or 'FIELD: value' (case-insensitive)."""
+    """Matches 'FIELD=value' or 'FIELD: value' (case-insensitive). An empty
+    value counts as missing; [ \\t] rather than \\s keeps the match on its own
+    line, so 'FIELD=' never picks up the next line as its value."""
     m = re.search(
-        rf"^{re.escape(field)}\s*[:=]\s*(.+)$", block, re.MULTILINE | re.IGNORECASE
+        rf"^{re.escape(field)}[ \t]*[:=][ \t]*(.*)$", block, re.MULTILINE | re.IGNORECASE
     )
-    return m.group(1).strip() if m else None
+    value = m.group(1).strip() if m else ""
+    return value or None
+
+
+def check_group_field(blocks, field):
+    """Stop before writing anything when no spectrum has the group field:
+    the split would come out empty (and, in the 3-way case, an empty
+    _test file would make every later run skip creating a real one)."""
+    if any(extract_field(block, field) is not None for block in blocks):
+        return
+    keys = sorted({m.group(1) for m in re.finditer(
+        r"^([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", blocks[0], re.MULTILINE)})
+    raise SystemExit(
+        f"Error: none of the {len(blocks)} spectra has a '{field}' field, "
+        f"so nothing would be split and no files were written. Fields in the "
+        f"first spectrum: {', '.join(keys) or '(none)'}. Pass --group-field "
+        f"with one of them (TopRepo-annotated files: DATABASE_SEQUENCE)."
+    )
 
 
 def greedy_assign(groups, keys, targets, seed):
@@ -141,10 +160,10 @@ def main():
     ap.add_argument("--input", required=True, type=Path, help="Annotated MS file (full, unsplit).")
     ap.add_argument(
         "--group-field",
-        default="PROTEOFORM_ID",
-        help="Header field to group spectra by (default: PROTEOFORM_ID). "
-        "Use PROTEIN_ACCESSION (or your file's equivalent) to group at the "
-        "protein level instead of the proteoform level.",
+        default="DATABASE_SEQUENCE",
+        help="Header field to group spectra by (default: DATABASE_SEQUENCE, "
+        "the proteoform sequence TopRepo writes into each spectrum). "
+        "Use PROTEIN_ACCESSION to group at the protein level instead.",
     )
     ap.add_argument("--train-ratio", type=float, default=0.8)
     ap.add_argument(
@@ -174,6 +193,7 @@ def main():
     blocks = parse_blocks(text, begin_tag, end_tag)
     if not blocks:
         raise SystemExit(f"No blocks found with tags {begin_tag!r}/{end_tag!r}.")
+    check_group_field(blocks, args.group_field)
 
     existing_test_path = args.val_file_dir / f"{args.input.stem}_test{args.input.suffix}"
     has_existing_test = existing_test_path.exists()

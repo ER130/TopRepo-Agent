@@ -1,0 +1,10 @@
+# Packages the pipeline's own scripts import (TopRepo, ms_process, PDpred),
+# installed into the same .venv as requirements.txt. torch is not here: its
+# build depends on whether the machine has an NVIDIA GPU, so it's installed
+# separately (see skills/pipeline_common/SKILL.md, "Python packages").
+numpy
+pandas
+pyteomics
+lxml
+h5py
+torchinfo
