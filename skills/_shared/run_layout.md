@@ -14,13 +14,19 @@ One dataset's entire journey through the pipeline lives under one folder:
 ```
 runs/<run_name>/
   run_log.txt                     -- append-only, one line per finished stage
-  01_toppic_suite/                -- raw file, mzML, msalign, .feature, PrSM TSV
+  01_toppic_suite/                -- mzML, FASTA, msalign, .feature, PrSM TSV
   02_toprepo_pipeline/             -- Phase 1 TSVs + the annotated msalign/mgf
   03_ms_process/                  -- train/val(/test) split + scan metadata TSV
   04_pdpred_pipeline/
     train/<name>/                 -- checkpoint + training log
     predict/<name>/               -- predictions + predict log
 ```
+
+Under WSL with the project on a Windows drive, `runs` is a link to
+`~/toprepo_runs` on the Linux disk (`hardware_check.md`, "Where the data
+is"); use `runs/...` paths as usual. Inputs the user has in a Windows
+folder (mzML, FASTA) are copied in; raw vendor files stay where they are
+(`msconvert` reads them there).
 
 `<run_name>` is the same identifier `toprepo_pipeline` calls
 `<dataset_id>` -- its own accession (e.g. `PXD029703`) when it has one,

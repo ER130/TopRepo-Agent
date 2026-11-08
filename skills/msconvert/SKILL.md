@@ -80,13 +80,15 @@ The plan names the files to convert, the output format and filters (and
 where they came from: the user, or which pipeline's row above), and the
 output folder:
 
-- **Output folder**: if it's for a pipeline, use that pipeline's input
-  folder -- for `toppic_suite`, its `<ms_dir>` (by default
-  `runs/<run_name>/01_toppic_suite/`, see `skills/_shared/run_layout.md`).
-  Otherwise ask, or put it next to the raw file.
-- **Keep the raw file and output folder on a Windows drive**
-  (`/mnt/c/...`, `/mnt/d/...`). `msconvert.exe` is a Windows program and
-  may not read or write inside WSL's own filesystem (`/home/...`).
+- **Output folder**: `msconvert.exe` is a Windows program, so it reads
+  and writes on a Windows drive (`/mnt/c/...`, `/mnt/d/...`) -- not on
+  WSL's own Linux disk, where `runs/` is (`run_layout.md`). Convert into
+  `<project>/msconvert_out/` (the project root, on the Windows drive),
+  then, if it's for a pipeline, move the mzML into that pipeline's input
+  folder -- for `toppic_suite`, `<ms_dir>`, by default
+  `runs/<run_name>/01_toppic_suite/` -- after step 4's check. Not for a
+  pipeline: ask where it goes, or leave it next to the raw file.
+- The raw file stays where the user has it (also a Windows drive).
 
 ## Steps
 
@@ -181,6 +183,11 @@ grep -c '"MS:1000127"' <file>.mzML                # centroid: about the spectrum
   without MS2.
 - Profile spectra -> it wasn't centroided. Re-convert with peak picking
   (or ask the user to redo it with the Peak Picking filter added).
+
+Checks passed and it's for a pipeline -> move it onto the Linux disk:
+`mkdir -p <ms_dir> && mv <project>/msconvert_out/<file>.mzML <ms_dir>/`.
+An mzML the user gave you from a Windows folder is copied there the same
+way (`cp`), so their original stays put.
 
 For other formats, at least count the spectra (e.g. `grep -c '^BEGIN
 IONS' <file>.mgf`) and compare with what the user expects.

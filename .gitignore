@@ -1,7 +1,13 @@
 # Pipeline run outputs -- per-user research data and generated results,
 # not code. One subfolder per dataset/run; each pipeline skill's own
-# SKILL.md documents what goes where inside it.
+# SKILL.md documents what goes where inside it. Under WSL with the
+# project on a Windows drive, runs is a link to ~/toprepo_runs (code.py),
+# which "runs/" alone wouldn't match.
+runs
 runs/
+# msconvert.exe's output folder on the Windows drive (msconvert skill),
+# before the mzML moves into runs/.
+msconvert_out/
 
 # Files uploaded through the web UI (server.py) -- per-user data, same
 # treatment as the folders above.

@@ -31,7 +31,11 @@ key from [console.anthropic.com](https://console.anthropic.com/), and set
 `MODEL_ID`. Both are required -- the agent won't start without them.
 
 The agent runs on Linux or macOS only; on Windows it runs inside WSL
-(Ubuntu). TopFD/TopPIC are installed natively the first time you ask for
+(Ubuntu). With the project on a Windows drive (e.g. `D:\`), the agent
+keeps its run data on WSL's Linux disk instead -- reading and writing a
+Windows drive from WSL is very slow for TopPIC -- so `runs` in the
+project is a link to `~/toprepo_runs`, created automatically. Open it
+from Windows Explorer at `\\wsl.localhost\Ubuntu\home\<your WSL user>\toprepo_runs`. TopFD/TopPIC are installed natively the first time you ask for
 them: the agent builds them from the source in `skills/toppic_suite/`,
 and asks you to run the two install steps in your own terminal (the
 dependencies with `sudo apt install` or `brew install`, then

@@ -22,17 +22,18 @@ grep -qi microsoft /proc/version && echo WSL
 ```
 
 **Where the data is -- always its own line in the plan.** Every stage
-works inside the project's own `runs/<run_name>/` (see `run_layout.md`),
-wherever the project folder is. Don't move a run elsewhere, e.g. to
-`~/...` for speed: the agent's file tools only reach inside the project,
-deleting a stage's partial output outside `runs/` asks the user each
+works inside the project's own `runs/<run_name>/` (see `run_layout.md`).
+Don't put a run anywhere else: the agent's file tools only reach the
+project and `runs/`, deleting partial output elsewhere asks the user each
 time, and later stages look for earlier output in `runs/`.
 
-Under WSL, a project on `/mnt/<drive>/` (check with `pwd`) is on the
-Windows disk, which is slower to read and write from WSL -- TopFD on the
-bundled test file took about twice as long there as on the Linux disk;
-the gap on real data hasn't been measured. Say so in the plan as a
-fact about the run, not as a choice to make.
+Under WSL with the project on a Windows drive (`/mnt/<drive>/`), `runs`
+is a link to `~/toprepo_runs` on the Linux disk (`code.py` sets it up),
+because the Windows drive is very slow from WSL for this work: a TopPIC
+run with its files there took about 7 hours, almost all of it waiting on
+disk. Check with `readlink -f runs`. If `runs/` is a plain folder on
+`/mnt/<drive>/` instead, say so in the plan and tell the user the
+agent printed how to fix it at startup.
 
 ## 2. Choose resource parameters from the check
 

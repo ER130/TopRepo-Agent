@@ -109,6 +109,39 @@ MEMORY_DIR = WORKDIR / ".memory"
 MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
 TASKS_DIR = WORKDIR / ".tasks"
 TASK_ID_PATTERN = re.compile(r"^task_[0-9a-f]{8}$")
+RUNS_DIR_NAME = "runs"
+# Under WSL, a project on a Windows drive (/mnt/<drive>/) reads and writes
+# through a slow translation layer -- a TopPIC run there spent most of 7
+# hours waiting on disk. So runs/, where the pipeline's data lives, is a
+# link to a folder on the Linux disk; the code stays where it is.
+LINUX_RUNS_DIR = Path.home() / "toprepo_runs"
+
+
+def _on_wsl_windows_drive() -> bool:
+    try:
+        on_wsl = "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+    return on_wsl and str(WORKDIR.resolve()).startswith("/mnt/")
+
+
+def link_runs_to_linux_disk():
+    runs = WORKDIR / RUNS_DIR_NAME
+    if runs.is_symlink():
+        runs.resolve().mkdir(parents=True, exist_ok=True)  # e.g. a fresh WSL install
+        return
+    if not _on_wsl_windows_drive():
+        return
+    if runs.exists():
+        print(f"[runs] {runs} is a folder on the Windows drive, so pipeline steps "
+              f"in it run slowly. Move its contents to {LINUX_RUNS_DIR}, delete "
+              "it, and restart: runs/ then becomes a link there.")
+        return
+    LINUX_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    runs.symlink_to(LINUX_RUNS_DIR)
+
+
+link_runs_to_linux_disk()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 # Some Anthropic-compatible providers may reject cache_control; set
@@ -1656,10 +1689,20 @@ def run_bash(command: str, run_in_background: bool = False,
     return output
 
 
+def in_workspace(path: Path, base: Path = WORKDIR) -> bool:
+    """Inside the workspace -- counting runs/ as inside when it's a link to
+    the Linux disk (see link_runs_to_linux_disk)."""
+    resolved = path.resolve()
+    roots = [base.resolve()]
+    if (base / RUNS_DIR_NAME).is_symlink():
+        roots.append((base / RUNS_DIR_NAME).resolve())
+    return any(resolved.is_relative_to(root) for root in roots)
+
+
 def safe_path(path: str, cwd: Path | None = None) -> Path:
-    base = (cwd or WORKDIR).resolve()
-    resolved = (base / path).resolve()
-    if not resolved.is_relative_to(base):
+    base = cwd or WORKDIR
+    resolved = (base.resolve() / path).resolve()
+    if not in_workspace(resolved, base):
         raise ValueError(f"Path escapes workspace: {path}")
     return resolved
 
@@ -1702,7 +1745,7 @@ def run_glob(pattern: str, cwd: Path | None = None) -> str:
         matches = sorted({
             match for match in glob.glob(
                 pattern, root_dir=base, recursive=True)
-            if (base / match).resolve().is_relative_to(base.resolve())
+            if in_workspace(base / match, base)
         })
         shown = matches[:200]
         if len(matches) > 200:
@@ -3157,7 +3200,6 @@ DESTRUCTIVE = ["> /etc/", "chmod 777"]
 # the pipeline skills ask for. Only plain `cd`/`rm` chains whose targets
 # all sit inside a stage folder (runs/<run>/<stage>/...) qualify; deleting
 # a whole run, or anything the parser can't follow, still asks.
-RUNS_DIR_NAME = "runs"
 SHELL_UNPARSEABLE = re.compile(r"[$`|<>\n]|(?<!&)&(?!&)")
 GLOB_CHARS = re.compile(r"[*?\[]")
 
@@ -3296,7 +3338,7 @@ def check_permission(block, prompt_user: bool = True,
 
     if block.name in ("read_file", "write_file", "edit_file"):
         path = block.input.get("path", "")
-        if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
+        if not in_workspace(WORKDIR / path):
             if not prompt_user:
                 return "Permission required: path is outside the workspace."
             return request_permission(block, "Access outside workspace")

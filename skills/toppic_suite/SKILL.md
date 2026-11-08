@@ -229,7 +229,7 @@ macOS). Wait for them to say it's done. Don't run the binaries from
 
 ## Pipeline
 
-Keep a dataset's raw file, mzML, and TopFD/TopPIC output together in one
+Keep a dataset's mzML, FASTA, and TopFD/TopPIC output together in one
 directory, `<ms_dir>` -- by default `runs/<run_name>/01_toppic_suite/`
 (`run_layout.md`; append a `run_log.txt` line when you create it). Use an
 existing folder for this dataset if there is one; resolve it once and
